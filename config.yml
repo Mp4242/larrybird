@@ -1,0 +1,15 @@
+admin_ids:
+  - 136457676
+  - 987654321
+mentor_ids:
+  - 136457676
+
+super_group: -1002688607388
+
+topics:
+  sos: 16
+  wins: 271
+  main: 31
+
+avg_hours_day: 4
+avg_neurons_day: 10000
