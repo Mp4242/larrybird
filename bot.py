@@ -10,7 +10,7 @@ from sqlalchemy import select
 import aiocron
 
 from handlers import onboarding_router, main_router, counter_router, replies_router, posts_router, settings_router  # Ajoute posts/settings
-from config import TOKEN, MILESTONES, SUPER_GROUP, TOPICS, TRIBUTE_WEBHOOK_SECRET  # Si webhook
+from config import TOKEN, MILESTONES, SUPER_GROUP, TOPICS
 from database.database import async_session
 from database.user import User
 
