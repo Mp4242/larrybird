@@ -1,138 +1,87 @@
-# handlers/myposts.py
-import math, logging
+# handlers/post.py
 from aiogram import Router, F
-from aiogram.types import (
-    Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
-)
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
-from aiogram.fsm.state import State, StatesGroup
+from aiogram.filters import StateFilter
 from sqlalchemy import select
 
-from database.database import async_session
+from database.utils import (
+    get_user,
+    get_posts_by_user,
+    get_post_by_id,
+    update_post,
+)
 from database.post import Post
-from database.user import User
+from handlers.main import post_inline_keyboard, format_sobriety_duration
 from config import SUPER_GROUP
 
-myposts_router = Router()
-logging.basicConfig(level=logging.INFO)
+posts_router = Router()
 
-POSTS_PER_PAGE = 5           # pagination simple
+# ─────────────────────────  /myposts  ─────────────────────────
+@posts_router.message(F.text == "/myposts")
+async def cmd_myposts(msg: Message, state: FSMContext):
+    user = await get_user(msg.from_user.id)
+    if not user:
+        return await msg.answer("❌ Нет профиля. Напиши /start")
 
-class DelState(StatesGroup):
-    waiting_confirm = State()        # awaiting Yes / No
-
-# ---------- /myposts -----------------------------------------------------
-@myposts_router.message(F.chat.type == "private", F.text == "/myposts")
-async def cmd_myposts(msg: Message):
-    page = 1
-    await _send_page(msg, msg.from_user.id, page)
-
-async def _send_page(msg: Message, tg_id: int, page: int):
-    async with async_session() as ses:
-        user = await ses.scalar(select(User).where(User.telegram_id == tg_id))
-        if not user:
-            return await msg.answer("❌ Профиль не найден. /start")
-
-        q = select(Post).where(Post.author_id == user.id, Post.is_deleted.is_(False))
-        total = (await ses.execute(q)).scalars().count()
-        pages = max(1, math.ceil(total / POSTS_PER_PAGE))
-
-        # slice
-        posts = (
-            await ses.execute(
-                q.order_by(Post.created_at.desc())
-                 .offset((page-1)*POSTS_PER_PAGE)
-                 .limit(POSTS_PER_PAGE)
-            )
-        ).scalars().all()
-
+    posts = await get_posts_by_user(user.id)
     if not posts:
-        return await msg.answer("У тебя пока нет постов.")
+        return await msg.answer("У тебя пока нет сообщений.")
 
-    lines, kb_rows = [], []
     for p in posts:
-        excerpt = (p.text[:70] + "…") if len(p.text) > 70 else p.text
-        lines.append(f"#{p.id} • {excerpt}")
-        kb_rows.append([
-            InlineKeyboardButton("🗑️ Удалить", callback_data=f"del:{p.id}")
-        ])
+        header = f"#{p.id} · {p.created_at:%d.%m.%Y} · {len(p.text)} симв."
+        preview = (p.text[:100] + "…") if len(p.text) > 100 else p.text
 
-    nav = []
-    if page > 1:
-        nav.append(InlineKeyboardButton("⬅️", callback_data=f"mypg:{page-1}"))
-    if page < pages:
-        nav.append(InlineKeyboardButton("➡️", callback_data=f"mypg:{page+1}"))
-    if nav:
-        kb_rows.append(nav)
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton("🗑️ Удалить", callback_data=f"del:{p.id}")]
+            ]
+        )
+        await msg.answer(f"{header}\n\n{preview}", reply_markup=kb)
 
-    await msg.answer(
-        "Твои посты:\n" + "\n".join(lines),
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows)
-    )
-
-# ---------- pagination callback -----------------------------------------
-@myposts_router.callback_query(F.data.startswith("mypg:"))
-async def myposts_page(cb: CallbackQuery):
-    page = int(cb.data.split(":",1)[1])
-    await cb.answer()
-    await _send_page(cb.message, cb.from_user.id, page)
-    await cb.message.delete()
-
-# ---------- supprimer : demande de conf ---------------------------------
-@myposts_router.callback_query(F.data.startswith("del:"))
-async def ask_delete(cb: CallbackQuery, state: FSMContext):
-    post_id = int(cb.data.split(":",1)[1])
-    await state.set_state(DelState.waiting_confirm)
-    await state.update_data(target_id=post_id)
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton("✅ Oui",  callback_data="del_yes"),
-            InlineKeyboardButton("❌ Non", callback_data="del_no"),
+# ─────────────────────  Confirmation suppression  ─────────────────────
+@posts_router.callback_query(F.data.startswith("del:"))
+async def confirm_delete(cb: CallbackQuery, state: FSMContext):
+    post_id = int(cb.data.split(":", 1)[1])
+    await state.update_data(del_id=post_id)
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton("✅ Да, удалить", callback_data="del_yes"),
+                InlineKeyboardButton("❌ Отмена", callback_data="del_no"),
+            ]
         ]
-    ])
-    await cb.answer()
-    await cb.message.answer(
-        "⚠️ Удаление нельзя отменить и закроет весь тред.\nУдалить?",
+    )
+    await cb.message.edit_text(
+        f"⚠️ Это удалит пост #{post_id} и все ответы.\nПродолжить?",
         reply_markup=kb
     )
+    await cb.answer()
 
-# ---------- conf NON -----------------------------------------------------
-@myposts_router.callback_query(DelState.waiting_confirm, F.data == "del_no")
-async def del_cancel(cb: CallbackQuery, state: FSMContext):
-    await state.clear()
-    await cb.answer("Отменено.", show_alert=True)
-    await cb.message.delete()
-
-# ---------- conf OUI  → soft delete -------------------------------------
-@myposts_router.callback_query(DelState.waiting_confirm, F.data == "del_yes")
-async def del_execute(cb: CallbackQuery, state: FSMContext):
+# ─────────────────────  Exécution suppression  ─────────────────────
+@posts_router.callback_query(F.data == "del_yes")
+async def delete_post(cb: CallbackQuery, state: FSMContext):
     data = await state.get_data()
-    post_id = data.get("target_id")
-    uid = cb.from_user.id
+    post_id = data.get("del_id")
 
-    async with async_session() as ses:
-        user = await ses.scalar(select(User).where(User.telegram_id == uid))
-        post = await ses.get(Post, post_id)
+    post = await get_post_by_id(post_id)
+    if not post:
+        return await cb.answer("Пост уже удалён.", show_alert=True)
 
-        if not post or post.author_id != user.id or post.is_deleted:
-            await cb.answer("❌ Не могу удалить.", show_alert=True)
-            await state.clear()
-            return
+    # Soft-delete en base
+    await update_post(post_id, is_deleted=True)
 
-        # 1. flag DB
-        post.is_deleted = True
-        await ses.commit()
+    # Éditer le message Telegram
+    await cb.message.bot.edit_message_text(
+        chat_id=SUPER_GROUP,
+        message_id=post_id,
+        text="(удалено)"
+    )
 
-    # 2. edit TG message – remplacer texte + retirer boutons
-    try:
-        await cb.bot.edit_message_text(
-            chat_id=SUPER_GROUP,
-            message_id=post_id,
-            text="(удалено)"
-        )
-    except Exception as e:
-        logging.warning(f"[DEL] TG edit fail: {e}")
-
+    await cb.answer("✅ Пост удалён.", show_alert=True)
     await state.clear()
-    await cb.answer("Удалено.", show_alert=True)
-    await cb.message.delete()
+
+@posts_router.callback_query(F.data == "del_no")
+async def delete_cancel(cb: CallbackQuery, state: FSMContext):
+    await state.clear()
+    await cb.answer("❌ Отменено", show_alert=True)
