@@ -1,18 +1,24 @@
-# handlers/post.py   (remplace le fichier actuel)
-
+# handlers/post.py
 from aiogram import Router, F
 from aiogram.types import (
     Message, CallbackQuery,
-    InlineKeyboardMarkup, InlineKeyboardButton
+    InlineKeyboardMarkup, InlineKeyboardButton,
 )
 from sqlalchemy import select
-from database.utils import get_user, get_posts_by_user, get_post_by_id, update_post
+
+from database.utils import (
+    get_user,
+    get_posts_by_user,
+    get_post_by_id,
+    update_post,
+)
 from database.post import Post
 from config import SUPER_GROUP
 
 posts_router = Router()
 
-# ──────────── /myposts  /posts ─────────────
+
+# ─────────────────────────  /myposts  /posts  ─────────────────────────
 @posts_router.message(F.text.in_(("/myposts", "/posts")))
 async def cmd_myposts(msg: Message):
     user = await get_user(msg.from_user.id)
@@ -24,31 +30,38 @@ async def cmd_myposts(msg: Message):
         return await msg.answer("У тебя пока нет сообщений.")
 
     for p in posts:
-        header  = f"#{p.id} · {p.created_at:%d.%m.%Y}"
+        header = f"#{p.id} · {p.created_at:%d.%m.%Y}"
         preview = p.text[:100] + ("…" if len(p.text) > 100 else "")
         kb = InlineKeyboardMarkup(
-            inline_keyboard=[[InlineKeyboardButton("🗑️ Удалить", callback_data=f"del:{p.id}")]]
+            inline_keyboard=[[
+                InlineKeyboardButton(
+                    text="🗑️ Удалить",
+                    callback_data=f"del:{p.id}",
+                )
+            ]]
         )
         await msg.answer(f"{header}\n\n{preview}", reply_markup=kb)
 
-# ───────────── Confirmation ──────────────
+
+# ─────────────────────────  Confirmation  ────────────────────────────
 @posts_router.callback_query(F.data.startswith("del:"))
 async def confirm_delete(cb: CallbackQuery):
     post_id = int(cb.data.split(":", 1)[1])
     kb = InlineKeyboardMarkup(
         inline_keyboard=[[
-            InlineKeyboardButton("✅ Да",  callback_data=f"del_yes:{post_id}"),
-            InlineKeyboardButton("❌ Нет", callback_data="del_no")
+            InlineKeyboardButton(text="✅ Да",  callback_data=f"del_yes:{post_id}"),
+            InlineKeyboardButton(text="❌ Нет", callback_data="del_no"),
         ]]
     )
     await cb.message.edit_text(
-        f"⚠️ Удалить пост #{post_id} и все ответы ?",
-        reply_markup=kb
+        f"⚠️ Удалить пост #{post_id} и все ответы?",
+        reply_markup=kb,
     )
     await cb.answer()
 
-# ───────────── Suppression ───────────────
-@posts_router.callback_query(F.data.starts_with("del_yes:"))
+
+# ─────────────────────────  Suppression  ─────────────────────────────
+@posts_router.callback_query(F.data.startswith("del_yes:"))
 async def delete_post(cb: CallbackQuery):
     post_id = int(cb.data.split(":", 1)[1])
 
@@ -63,10 +76,11 @@ async def delete_post(cb: CallbackQuery):
     await cb.message.bot.edit_message_text(
         chat_id=SUPER_GROUP,
         message_id=post_id,
-        text="(удалено)"
+        text="(удалено)",
     )
     await cb.answer("✅ Пост удалён", show_alert=True)
-    await cb.message.delete()          # retire la carte «🗑️ Удалить»
+    await cb.message.delete()  # retire la carte « 🗑️ Удалить »
+
 
 @posts_router.callback_query(F.data == "del_no")
 async def cancel_del(cb: CallbackQuery):
