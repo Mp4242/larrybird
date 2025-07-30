@@ -1,49 +1,42 @@
 # handlers/post.py
 from aiogram import Router, F
-from aiogram.types import (
-    Message, CallbackQuery,
-    InlineKeyboardMarkup, InlineKeyboardButton,
-)
-from sqlalchemy import select
-
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from database.utils import (
     get_user,
     get_posts_by_user,
     get_post_by_id,
     update_post,
 )
-from database.post import Post
-from config import SUPER_GROUP
+from config import SUPER_GROUP, TOPICS
 
 posts_router = Router()
 
-
-# ─────────────────────────  /myposts  /posts  ─────────────────────────
+# ──────────── /myposts | /posts ────────────
 @posts_router.message(F.text.in_(("/myposts", "/posts")))
 async def cmd_myposts(msg: Message):
     user = await get_user(msg.from_user.id)
     if not user:
         return await msg.answer("❌ Нет профиля. Напиши /start")
 
-    posts = await get_posts_by_user(user.id)
+    # 🔸 Ne prendre que les messages publiés dans TOPICS (WIN/SOS) = posts d’origine
+    topic_ids = set(TOPICS.values())               # {id_sos, id_wins}
+    posts = [p for p in await get_posts_by_user(user.id) if p.thread_id in topic_ids and not p.deleted]
+
     if not posts:
-        return await msg.answer("У тебя пока нет сообщений.")
+        return await msg.answer("У тебя пока нет собственных постов.")
 
     for p in posts:
-        header = f"#{p.id} · {p.created_at:%d.%m.%Y}"
+        header  = f"#{p.id} · {p.created_at:%d.%m.%Y}"
         preview = p.text[:100] + ("…" if len(p.text) > 100 else "")
         kb = InlineKeyboardMarkup(
             inline_keyboard=[[
-                InlineKeyboardButton(
-                    text="🗑️ Удалить",
-                    callback_data=f"del:{p.id}",
-                )
+                InlineKeyboardButton(text="🗑️ Удалить", callback_data=f"del:{p.id}")
             ]]
         )
         await msg.answer(f"{header}\n\n{preview}", reply_markup=kb)
 
 
-# ─────────────────────────  Confirmation  ────────────────────────────
+# ─────────── Confirmation suppression ───────────
 @posts_router.callback_query(F.data.startswith("del:"))
 async def confirm_delete(cb: CallbackQuery):
     post_id = int(cb.data.split(":", 1)[1])
@@ -60,17 +53,17 @@ async def confirm_delete(cb: CallbackQuery):
     await cb.answer()
 
 
-# ─────────────────────────  Suppression  ─────────────────────────────
+# ─────────── Suppression (soft-delete) ───────────
 @posts_router.callback_query(F.data.startswith("del_yes:"))
 async def delete_post(cb: CallbackQuery):
     post_id = int(cb.data.split(":", 1)[1])
 
     post = await get_post_by_id(post_id)
-    if not post or post.is_deleted:
+    if not post or post.deleted:                     # ← renommé
         return await cb.answer("Пост уже удалён.", show_alert=True)
 
-    # soft-delete
-    await update_post(post_id, is_deleted=True)
+    # soft-delete en base
+    await update_post(post_id, deleted=True)         # ← supprimé logique
 
     # masque le message public
     await cb.message.bot.edit_message_text(
@@ -79,7 +72,7 @@ async def delete_post(cb: CallbackQuery):
         text="(удалено)",
     )
     await cb.answer("✅ Пост удалён", show_alert=True)
-    await cb.message.delete()  # retire la carte « 🗑️ Удалить »
+    await cb.message.delete()                        # supprime la carte DM
 
 
 @posts_router.callback_query(F.data == "del_no")
