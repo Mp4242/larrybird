@@ -13,7 +13,7 @@ from database.utils import (
 )
 from database.post import Post
 from handlers.main import post_inline_keyboard, format_sobriety_duration
-from config import SUPER_GROUP
+from config import SUPER_GROUP    # <- plus besoin de bot ni TOPICS
 
 posts_router = Router()
 
@@ -29,13 +29,11 @@ async def cmd_myposts(msg: Message, state: FSMContext):
         return await msg.answer("У тебя пока нет сообщений.")
 
     for p in posts:
-        header = f"#{p.id} · {p.created_at:%d.%m.%Y} · {len(p.text)} симв."
-        preview = (p.text[:100] + "…") if len(p.text) > 100 else p.text
+        header = f"#{p.id} · {p.created_at:%d.%m.%Y}"
+        preview = p.text if len(p.text) <= 100 else p.text[:100] + "…"
 
         kb = InlineKeyboardMarkup(
-            inline_keyboard=[
-                [InlineKeyboardButton("🗑️ Удалить", callback_data=f"del:{p.id}")]
-            ]
+            inline_keyboard=[[InlineKeyboardButton("🗑️ Удалить", callback_data=f"del:{p.id}")]]
         )
         await msg.answer(f"{header}\n\n{preview}", reply_markup=kb)
 
@@ -44,6 +42,7 @@ async def cmd_myposts(msg: Message, state: FSMContext):
 async def confirm_delete(cb: CallbackQuery, state: FSMContext):
     post_id = int(cb.data.split(":", 1)[1])
     await state.update_data(del_id=post_id)
+
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
             [
@@ -54,7 +53,7 @@ async def confirm_delete(cb: CallbackQuery, state: FSMContext):
     )
     await cb.message.edit_text(
         f"⚠️ Это удалит пост #{post_id} и все ответы.\nПродолжить?",
-        reply_markup=kb
+        reply_markup=kb,
     )
     await cb.answer()
 
@@ -68,14 +67,14 @@ async def delete_post(cb: CallbackQuery, state: FSMContext):
     if not post:
         return await cb.answer("Пост уже удалён.", show_alert=True)
 
-    # Soft-delete en base
+    # Soft-delete en DB
     await update_post(post_id, is_deleted=True)
 
     # Éditer le message Telegram
     await cb.message.bot.edit_message_text(
         chat_id=SUPER_GROUP,
         message_id=post_id,
-        text="(удалено)"
+        text="(удалено)",
     )
 
     await cb.answer("✅ Пост удалён.", show_alert=True)
