@@ -194,13 +194,6 @@ class ReplyState(StatesGroup):
 
 
 # ───── Helpers
-async def profile_ok(user: User | None, reply_fn) -> bool:
-    if not user or not user.pseudo or not user.avatar_emoji:
-        await reply_fn("⚠️ Профиль не завершён. Напиши /start.")
-        return False
-    return True
-
-
 def link_to_post(msg_id: int) -> str:
     return f"https://t.me/c/{str(SUPER_GROUP)[4:]}/{msg_id}"
 
@@ -208,6 +201,26 @@ def link_to_post(msg_id: int) -> str:
 def deep_link(post_id: int) -> str:
     return f"https://t.me/{BOT_USERNAME.lstrip('@')}?start=reply_{post_id}"
 
+async def warn_private(bot, tg_id: int, text: str) -> None:
+    """
+    Essaie d’envoyer un DM. S’il est impossible (user n’a jamais cliqué « Start »),
+    on reste silencieux : le deep-link sera proposé ailleurs.
+    """
+    try:
+        await bot.send_message(tg_id, text)
+    except TelegramForbiddenError:
+        pass  # on ne pollue pas le topic
+
+async def profile_ok(user: User | None, bot, tg_id: int) -> bool:
+    """
+    Retourne True si le profil est complet, sinon envoie un avertissement privé
+    et retourne False.
+    """
+    if not user or not user.pseudo or not user.avatar_emoji:
+        await warn_private(bot, tg_id,
+                           "⚠️ Сначала создай профиль → /start")
+        return False
+    return True
 
 # ───── Bouton « ✍️ Ответить » dans le groupe
 @replies_router.callback_query(F.data.startswith("reply:"))
@@ -221,7 +234,7 @@ async def open_reply(cb: CallbackQuery, state: FSMContext):
             return await cb.answer("❌ Пост не найден", show_alert=True)
 
         user = await ses.scalar(select(User).where(User.telegram_id == cb.from_user.id))
-        if not await profile_ok(user, cb.message.answer):
+        if not await profile_ok(user, cb.bot, cb.from_user.id):
             return
 
     # Popup dans le groupe
@@ -282,7 +295,7 @@ async def save_reply(msg: Message, state: FSMContext):
             return
 
         user: User = await ses.scalar(select(User).where(User.telegram_id == msg.from_user.id))
-        if not await profile_ok(user, msg.answer):
+        if not await profile_ok(user, msg.bot, msg.from_user.id):
             return
 
         # 1) Publier la réponse — lien vers le *post d’origine*, sans preview
