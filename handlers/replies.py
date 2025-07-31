@@ -344,6 +344,7 @@ async def save_reply(msg: Message, state: FSMContext):
             id=sent.message_id,
             author_id=user.id,
             thread_id=post.thread_id,
+            parent_id=post.id,         # ← NEW  
             text=raw
         ))
         await ses.commit()

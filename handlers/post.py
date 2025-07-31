@@ -30,28 +30,23 @@ async def profile_ok(user: User | None, bot, tg_id: int) -> bool:
         return False
     return True
 
-# ──────────── /myposts | /posts ────────────
+# /posts  ou  /myposts
 @posts_router.message(F.text.in_(("/myposts", "/posts")))
 async def cmd_myposts(msg: Message):
     user = await get_user(msg.from_user.id)
-    if not await profile_ok(user, msg.bot, msg.from_user.id):
-        return
+    if not user:
+        return await msg.answer("❌ Сначала создай профиль: /start")
 
-    # 🔸 Ne prendre que les messages publiés dans TOPICS (WIN/SOS) = posts d’origine
-    topic_ids = set(TOPICS.values())               # {id_sos, id_wins}
-    posts = [p for p in await get_posts_by_user(user.id) if p.thread_id in topic_ids and not p.deleted]
-
+    posts = await get_posts_by_user(user.id, only_original=True)
     if not posts:
-        return await msg.answer("У тебя пока нет собственных постов.")
+        return await msg.answer("У тебя пока нет сообщений.")
 
     for p in posts:
         header  = f"#{p.id} · {p.created_at:%d.%m.%Y}"
         preview = p.text[:100] + ("…" if len(p.text) > 100 else "")
-        kb = InlineKeyboardMarkup(
-            inline_keyboard=[[
-                InlineKeyboardButton(text="🗑️ Удалить", callback_data=f"del:{p.id}")
-            ]]
-        )
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🗑️ Удалить", callback_data=f"del:{p.id}")]
+        ])
         await msg.answer(f"{header}\n\n{preview}", reply_markup=kb)
 
 
@@ -59,42 +54,33 @@ async def cmd_myposts(msg: Message):
 @posts_router.callback_query(F.data.startswith("del:"))
 async def confirm_delete(cb: CallbackQuery):
     post_id = int(cb.data.split(":", 1)[1])
-    kb = InlineKeyboardMarkup(
-        inline_keyboard=[[
-            InlineKeyboardButton(text="✅ Да",  callback_data=f"del_yes:{post_id}"),
-            InlineKeyboardButton(text="❌ Нет", callback_data="del_no"),
-        ]]
-    )
-    await cb.message.edit_text(
-        f"⚠️ Удалить пост #{post_id} и все ответы?",
-        reply_markup=kb,
-    )
+    kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="✅ Да",  callback_data=f"del_yes:{post_id}"),
+        InlineKeyboardButton(text="❌ Нет", callback_data="del_no")
+    ]])
+    await cb.message.edit_text(f"⚠️ Удалить пост #{post_id} и все ответы ?", reply_markup=kb)
     await cb.answer()
 
 
 # ─────────── Suppression (soft-delete) ───────────
+# suppression
 @posts_router.callback_query(F.data.startswith("del_yes:"))
 async def delete_post(cb: CallbackQuery):
     post_id = int(cb.data.split(":", 1)[1])
-
     post = await get_post_by_id(post_id)
-    if not post or post.deleted:                     # ← renommé
+    if not post or post.deleted:
         return await cb.answer("Пост уже удалён.", show_alert=True)
 
-    # soft-delete en base
-    await update_post(post_id, deleted=True)         # ← supprimé logique
+    # soft-delete DB
+    await update_post(post_id, deleted=True)
 
-    # masque le message public
-    await cb.message.bot.edit_message_text(
-        chat_id=SUPER_GROUP,
-        message_id=post_id,
-        text="(удалено)",
-    )
+    # soft-delete visuel
+    await cb.bot.edit_message_text(chat_id=SUPER_GROUP, message_id=post_id, text="(удалено)")
+
     await cb.answer("✅ Пост удалён", show_alert=True)
-    await cb.message.delete()                        # supprime la carte DM
+    await cb.message.delete()   # retire la carte
 
-
+# annulation
 @posts_router.callback_query(F.data == "del_no")
 async def cancel_del(cb: CallbackQuery):
-    await cb.answer("❌ Отменено", show_alert=True)
-    await cb.message.delete()
+    await cb.message.delete()   # on supprime la carte, sans popup
