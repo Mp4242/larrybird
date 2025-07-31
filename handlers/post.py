@@ -11,12 +11,28 @@ from config import SUPER_GROUP, TOPICS
 
 posts_router = Router()
 
+# ─── Helpers ---------------------------------------------------------------
+from aiogram.exceptions import TelegramForbiddenError
+
+async def warn_private(bot, tg_id: int, text: str) -> None:
+    try:
+        await bot.send_message(tg_id, text)
+    except TelegramForbiddenError:
+        pass
+
+async def profile_ok(user: User | None, bot, tg_id: int) -> bool:
+    if not user or not user.pseudo or not user.avatar_emoji:
+        await warn_private(bot, tg_id,
+                           "⚠️ Сначала создай профиль → /start")
+        return False
+    return True
+
 # ──────────── /myposts | /posts ────────────
 @posts_router.message(F.text.in_(("/myposts", "/posts")))
 async def cmd_myposts(msg: Message):
     user = await get_user(msg.from_user.id)
-    if not user:
-        return await msg.answer("❌ Нет профиля. Напиши /start")
+    if not await profile_ok(user, msg.bot, msg.from_user.id):
+        return
 
     # 🔸 Ne prendre que les messages publiés dans TOPICS (WIN/SOS) = posts d’origine
     topic_ids = set(TOPICS.values())               # {id_sos, id_wins}
