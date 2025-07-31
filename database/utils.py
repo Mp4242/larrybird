@@ -49,39 +49,23 @@ async def update_user(telegram_id: int, **kwargs) -> None:
 
 
 # ───────────────────────────────  POST  ───────────────────────────────────
+async def get_posts_by_user(user_id: int, *, only_original: bool = False):
+    async with get_session() as ses:
+        stmt = select(Post).where(
+            Post.author_id == user_id,
+            Post.deleted.is_(False)
+        )
+        if only_original:
+            stmt = stmt.where(Post.parent_id.is_(None))
+        return (await ses.execute(stmt)).scalars().all()
+
 async def get_post_by_id(post_id: int) -> Post | None:
     async with get_session() as ses:
         return await ses.get(Post, post_id)
 
-
-async def get_posts_by_user(
-    user_id: int,
-    *,
-    include_deleted: bool = False,
-) -> Sequence[Post]:
-    """
-    Récupère tous les posts (SOS, WIN, replies) d’un utilisateur.
-    Triés du plus récent au plus ancien.
-    """
+async def update_post(post_id: int, **kwargs):
     async with get_session() as ses:
-        stmt = (
-            select(Post)
-            .where(Post.author_id == user_id)
-            .order_by(Post.created_at.desc())
+        await ses.execute(
+            update(Post).where(Post.id == post_id).values(**kwargs)
         )
-        if not include_deleted and hasattr(Post, "is_deleted"):
-            stmt = stmt.where(Post.is_deleted.is_(False))
-        res = await ses.execute(stmt)
-        return res.scalars().all()
-
-
-async def update_post(post: Post | int, **kwargs) -> None:
-    """
-    Met à jour un Post existant (instance ou id) — pratique pour le soft-delete
-    ou l’édition du texte.
-    """
-    async with get_session() as ses:
-        post_id = post.id if isinstance(post, Post) else post
-        stmt = update(Post).where(Post.id == post_id).values(**kwargs)
-        await ses.execute(stmt)
         await ses.commit()
