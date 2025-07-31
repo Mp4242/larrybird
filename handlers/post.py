@@ -1,6 +1,9 @@
 # handlers/post.py
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
+from sqlalchemy import select
+from database.user import User 
+from database.post import Post
 from database.utils import (
     get_user,
     get_posts_by_user,
