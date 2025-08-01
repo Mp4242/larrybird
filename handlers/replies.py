@@ -300,7 +300,7 @@ async def save_reply(msg: Message, state: FSMContext):
         sent = await msg.bot.send_message(
             chat_id=SUPER_GROUP,
             message_thread_id=post.thread_id,
-            # reply_to_message_id=original_id,  ← ❌ SUPPRIMER cette ligne
+            reply_to_message_id=original_id,
             text=reply_txt,
             parse_mode="HTML",
             link_preview_options=LinkPreviewOptions(is_disabled=True)

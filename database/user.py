@@ -13,5 +13,5 @@ class User(Base):
     quit_date = Column(Date, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     last_checkpoint = Column(Integer, default=0)
-    notifications_enabled = Column(Boolean, default=True, nullable=False)
+    notifications_enabled = Column(Boolean, default=True)
     is_sober = Column(Boolean, default=True)

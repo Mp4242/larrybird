@@ -6,6 +6,7 @@ from aiogram import Bot, Dispatcher
 from aiogram.enums.parse_mode import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.client.default import DefaultBotProperties
+from handlers.milestones import milestone_router
 from sqlalchemy import select
 import aiocron
 
@@ -25,6 +26,7 @@ dp = Dispatcher(storage=MemoryStorage())
 dp.include_router(onboarding_router)
 dp.include_router(main_router)
 dp.include_router(replies_router)
+dp.include_router(milestone_router)
 dp.include_router(counter_router)
 dp.include_router(posts_router)  # Nouveau
 dp.include_router(settings_router)  # Nouveau
@@ -52,8 +54,10 @@ async def sobriety_check():
                 await bot.send_message(
                     SUPER_GROUP, TOPICS["wins"],
                     f"🥳 {u.avatar_emoji} <b>{u.pseudo}</b> празднует <b>{next_ms} д.</b>",
-                    parse_mode="HTML"
+                    parse_mode="HTML",
+                    reply_markup=milestone_kb(0)  # placeholder
                 )
+                await sent.edit_reply_markup(milestone_kb(sent.message_id))
                 u.last_checkpoint = next_ms
         await ses.commit()
 
@@ -67,6 +71,27 @@ async def motivation_notifs():
                 quote = random.choice(QUOTES)
                 await bot.send_message(u.telegram_id, quote)
 
+@milestone_router.callback_query(F.data.startswith("like:"))
+async def like_milestone(cb: CallbackQuery):
+    msg_id = int(cb.data.split(":")[1])
+    async with async_session() as ses:
+        # tentative insert ; si déjà → IntegrityError
+        try:
+            ses.add(MilestoneLike(message_id=msg_id, user_id=cb.from_user.id))
+            await ses.commit()
+        except IntegrityError:
+            await cb.answer("Уже лайкнул 🙂", show_alert=True)
+            return
+
+        likes = await ses.scalar(
+            select(func.count()).select_from(MilestoneLike)
+            .where(MilestoneLike.message_id == msg_id)
+        )
+    # MAJ libellé bouton
+    kb = milestone_kb(msg_id, likes)
+    await cb.message.edit_reply_markup(kb)
+    await cb.answer("👍")
+    
 # Webhook Tribute (si monet, de précédent)
 from aiohttp import web
 
