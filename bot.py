@@ -6,14 +6,18 @@ from aiogram import Bot, Dispatcher
 from aiogram.enums.parse_mode import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.client.default import DefaultBotProperties
-from handlers.milestones import milestone_router
-from sqlalchemy import select
 import aiocron
 
 from handlers import onboarding_router, main_router, counter_router, replies_router, posts_router, settings_router  # Ajoute posts/settings
 from config import TOKEN, MILESTONES, SUPER_GROUP, TOPICS
 from database.database import async_session
 from database.user import User
+
+from handlers.milestones import milestone_router, milestone_kb  
+from sqlalchemy import select, func
+from database.milestone_like import MilestoneLike            
+from aiogram import F                                           
+
 
 logging.basicConfig(level=logging.INFO)
 
@@ -51,7 +55,7 @@ async def sobriety_check():
             if next_ms and days >= next_ms:
                 await bot.send_message(u.telegram_id,
                     f"🎉 Поздравляю! Сегодня {next_ms} дней без травы.")
-                await bot.send_message(
+                sent = await bot.send_message(
                     SUPER_GROUP, TOPICS["wins"],
                     f"🥳 {u.avatar_emoji} <b>{u.pseudo}</b> празднует <b>{next_ms} д.</b>",
                     parse_mode="HTML",
@@ -71,27 +75,6 @@ async def motivation_notifs():
                 quote = random.choice(QUOTES)
                 await bot.send_message(u.telegram_id, quote)
 
-@milestone_router.callback_query(F.data.startswith("like:"))
-async def like_milestone(cb: CallbackQuery):
-    msg_id = int(cb.data.split(":")[1])
-    async with async_session() as ses:
-        # tentative insert ; si déjà → IntegrityError
-        try:
-            ses.add(MilestoneLike(message_id=msg_id, user_id=cb.from_user.id))
-            await ses.commit()
-        except IntegrityError:
-            await cb.answer("Уже лайкнул 🙂", show_alert=True)
-            return
-
-        likes = await ses.scalar(
-            select(func.count()).select_from(MilestoneLike)
-            .where(MilestoneLike.message_id == msg_id)
-        )
-    # MAJ libellé bouton
-    kb = milestone_kb(msg_id, likes)
-    await cb.message.edit_reply_markup(kb)
-    await cb.answer("👍")
-    
 # Webhook Tribute (si monet, de précédent)
 from aiohttp import web
 
