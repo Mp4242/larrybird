@@ -1,106 +1,133 @@
+# handlers/settings.py
 from aiogram import Router, F
-from aiogram.types import Message, CallbackQuery
+from aiogram.types import (
+    Message, CallbackQuery,
+    InlineKeyboardMarkup, InlineKeyboardButton
+)
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-from database.utils import get_user, update_user
 from datetime import date
+
+from database.utils import get_user, update_user
 
 settings_router = Router()
 
+# ────────────── FSM (champs éditables) ──────────────
 class SettingsState(StatesGroup):
-    pseudo = State()
-    emoji = State()
-    quit_date = State()
-    period = State()  # Pas besoin notifs state, toggle direct
+    pseudo      = State()
+    emoji       = State()
+    quit_date   = State()
+    period      = State()      # période d’auto-rappel, en jours
 
+# ────────────── /settings ──────────────
 @settings_router.message(Command("settings"))
 async def settings_handler(message: Message):
     user = await get_user(message.from_user.id)
     if not user:
-        await message.reply("Профиль не найден. Сначала /start!")
-        return
-    notifs_status = 'Вкл' if user.notifications_enabled else 'Выкл'
-    text = f"Текущие настройки:\n- Псевдоним: {user.pseudo}\n- Эмодзи: {user.avatar_emoji}\n- Дата отказа: {user.quit_date or 'Не указана'}\n- Уведомления: {notifs_status}\n- Период: {user.notification_period} дней"
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Изменить псевдоним", callback_data="edit_pseudo")],
-        [InlineKeyboardButton(text="Изменить эмодзи", callback_data="edit_emoji")],
-        [InlineKeyboardButton(text="Изменить дату отказа", callback_data="edit_quit_date")],
-        [InlineKeyboardButton(text="Уведомления Вкл/Выкл", callback_data="toggle_notifs")],
-        [InlineKeyboardButton(text="Изменить период уведомлений", callback_data="edit_period")]
-    ])
-    await message.answer(text, reply_markup=keyboard)
+        return await message.reply("❌ Профиль не найден. Сначала /start!")
 
+    # champs optionnels → valeurs par défaut
+    notif_enabled = getattr(user, "notifications_enabled", True)
+    notif_period  = getattr(user, "notification_period", 7)
+
+    text = (
+        "⚙️ <b>Текущие настройки</b>\n"
+        f"• Псевдоним: <code>{user.pseudo}</code>\n"
+        f"• Эмодзи: {user.avatar_emoji}\n"
+        f"• Дата отказа: {user.quit_date or '—'}\n"
+        f"• Уведомления: {'Вкл' if notif_enabled else 'Выкл'}\n"
+        f"• Период напоминаний: {notif_period} дн."
+    )
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton("✏️ Псевдоним",  callback_data="edit_pseudo")],
+        [InlineKeyboardButton("🙂 Эмодзи",     callback_data="edit_emoji")],
+        [InlineKeyboardButton("📅 Дата отказа", callback_data="edit_quit_date")],
+        [InlineKeyboardButton("🔔 Вкл/Выкл",   callback_data="toggle_notifs")],
+        [InlineKeyboardButton("⏰ Период",      callback_data="edit_period")],
+    ])
+    await message.answer(text, reply_markup=kb, parse_mode="HTML")
+
+# ────────────── PSEUDO ──────────────
 @settings_router.callback_query(F.data == "edit_pseudo")
-async def edit_pseudo(query: CallbackQuery, state: FSMContext):
-    await query.message.reply("Новый псевдоним (1-30 символов):")
+async def ask_pseudo(cb: CallbackQuery, state: FSMContext):
+    await cb.message.answer("✏️ Введите новый псевдоним (1-30 символов):")
     await state.set_state(SettingsState.pseudo)
+    await cb.answer()
 
 @settings_router.message(SettingsState.pseudo)
-async def save_pseudo(message: Message, state: FSMContext):
-    pseudo = message.text.strip()
+async def save_pseudo(msg: Message, state: FSMContext):
+    pseudo = msg.text.strip()
     if not 1 <= len(pseudo) <= 30:
-        await message.reply("Неверно! Попробуйте снова.")
-        return
-    await update_user(message.from_user.id, pseudo=pseudo)
-    await message.reply("Псевдоним обновлён! 🎉")
+        return await msg.answer("❌ Неверно. 1-30 символов, без пробелов.")
+    await update_user(msg.from_user.id, pseudo=pseudo)
+    await msg.answer("✅ Псевдоним обновлён!")
     await state.clear()
+
+# ────────────── EMOJI ──────────────
+EMOJIS = ["👤", "😎", "🐶", "🐱", "🦁", "🐺"]
 
 @settings_router.callback_query(F.data == "edit_emoji")
-async def edit_emoji(query: CallbackQuery, state: FSMContext):
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="👤", callback_data="set_emoji_👤")],
-        [InlineKeyboardButton(text="🐶", callback_data="set_emoji_🐶"), InlineKeyboardButton(text="😎", callback_data="set_emoji_😎")],
-        # Добавьте больше опций
-    ])
-    await query.message.edit_text("Выберите эмодзи:", reply_markup=keyboard)
+async def choose_emoji(cb: CallbackQuery, state: FSMContext):
+    rows = [[InlineKeyboardButton(e, callback_data=f"set_emoji:{e}")]
+            for e in EMOJIS]
+    await cb.message.edit_text("🙂 Выберите эмодзи:", reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
+    await cb.answer()
 
-@settings_router.callback_query(F.data.startswith("set_emoji_"))
-async def save_emoji(query: CallbackQuery, state: FSMContext):
-    emoji = query.data.split("_")[2]
-    await update_user(query.from_user.id, avatar_emoji=emoji)
-    await query.message.edit_text("Эмодзи обновлён! 🎉")
-    await state.clear()
+@settings_router.callback_query(F.data.startswith("set_emoji:"))
+async def save_emoji(cb: CallbackQuery, state: FSMContext):
+    emoji = cb.data.split(":")[1]
+    await update_user(cb.from_user.id, avatar_emoji=emoji)
+    await cb.message.edit_text("✅ Эмодзи обновлён!")
+    await cb.answer()
 
+# ────────────── QUIT DATE ──────────────
 @settings_router.callback_query(F.data == "edit_quit_date")
-async def edit_quit_date(query: CallbackQuery, state: FSMContext):
-    await query.message.reply("Новая дата отказа (ГГГГ-ММ-ДД):")
+async def ask_date(cb: CallbackQuery, state: FSMContext):
+    await cb.message.answer("📅 Новая дата (ГГГГ-ММ-ДД) или 0 — чтобы очистить:")
     await state.set_state(SettingsState.quit_date)
+    await cb.answer()
 
 @settings_router.message(SettingsState.quit_date)
-async def save_quit_date(message: Message, state: FSMContext):
-    try:
-        quit_date = date.fromisoformat(message.text)
-    except ValueError:
-        await message.reply("Неверный формат! ГГГГ-ММ-ДД.")
-        return
-    await update_user(message.from_user.id, quit_date=quit_date)
-    await message.reply("Дата обновлена! 📅")
+async def save_date(msg: Message, state: FSMContext):
+    raw = msg.text.strip()
+    if raw == "0":
+        await update_user(msg.from_user.id, quit_date=None)
+        await msg.answer("✅ Дата очищена.")
+    else:
+        try:
+            qd = date.fromisoformat(raw)
+        except ValueError:
+            return await msg.answer("❌ Формат: ГГГГ-ММ-ДД. Попробуйте ещё.")
+        await update_user(msg.from_user.id, quit_date=qd)
+        await msg.answer("✅ Дата обновлена.")
     await state.clear()
 
+# ────────────── NOTIFICATIONS ON/OFF ──────────────
 @settings_router.callback_query(F.data == "toggle_notifs")
-async def toggle_notifs(query: CallbackQuery):
-    user = await get_user(query.from_user.id)
-    new_enabled = not user.notifications_enabled
-    await update_user(query.from_user.id, notifications_enabled=new_enabled)
-    status = 'включены' if new_enabled else 'выключены'
-    await query.message.edit_text(f"Уведомления {status}! 🔕")
+async def toggle_notifs(cb: CallbackQuery):
+    user = await get_user(cb.from_user.id)
+    enabled = not getattr(user, "notifications_enabled", True)
+    await update_user(cb.from_user.id, notifications_enabled=enabled)
+    await cb.answer(f"🔔 Уведомления {'включены' if enabled else 'выключены'}", show_alert=True)
+    await cb.message.delete()
 
+# ────────────── PERIOD ──────────────
 @settings_router.callback_query(F.data == "edit_period")
-async def edit_period(query: CallbackQuery, state: FSMContext):
-    await query.message.reply("Новый период уведомлений (дней, напр. 7):")
+async def ask_period(cb: CallbackQuery, state: FSMContext):
+    await cb.message.answer("⏰ Новый период (дней, например 7):")
     await state.set_state(SettingsState.period)
+    await cb.answer()
 
 @settings_router.message(SettingsState.period)
-async def save_period(message: Message, state: FSMContext):
+async def save_period(msg: Message, state: FSMContext):
     try:
-        period = int(message.text)
-        if period < 1:
+        days = int(msg.text.strip())
+        if days < 1:
             raise ValueError
     except ValueError:
-        await message.reply("Неверно! Положительное число.")
-        return
-    await update_user(message.from_user.id, notification_period=period)
-    await message.reply("Период обновлён! ⏰")
+        return await msg.answer("❌ Введите положительное число.")
+    await update_user(msg.from_user.id, notification_period=days)
+    await msg.answer("✅ Период обновлён.")
     await state.clear()
