@@ -97,7 +97,24 @@ async def delete_post(cb: CallbackQuery, state: FSMContext):
     await state.clear()
 
 
+# Annuler suppression (callback "del_no")
 @posts_router.callback_query(F.data == "del_no")
 async def delete_cancel(cb: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    post_id = data.get("del_id")
+
+    post = await get_post_by_id(post_id)
+    if not post:
+        await cb.answer("Пост не найден.", show_alert=True)
+        await state.clear()
+        return
+
+    header  = f"#{post.id} · {post.created_at:%d.%m.%Y}"
+    preview = post.text if len(post.text) <= 100 else post.text[:100] + "…"
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[[InlineKeyboardButton(text="🗑️ Удалить",
+                                              callback_data=f"del:{post.id}")]]
+    )
+    await cb.message.edit_text(f"{header}\n\n{preview}", reply_markup=kb)
+    await cb.answer("❌ Отменено")
     await state.clear()
-    await cb.answer("❌ Отменено", show_alert=True)

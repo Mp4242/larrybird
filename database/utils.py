@@ -67,9 +67,9 @@ async def get_post_by_id(post_id: int) -> Post | None:
     async with get_session() as ses:
         return await ses.get(Post, post_id)
 
-async def update_post(post_id: int, **kwargs):
-    async with get_session() as ses:
+async def update_post(post_id: int, **fields):
+    async with async_session() as ses:
         await ses.execute(
-            update(Post).where(Post.id == post_id).values(**kwargs)
+            update(Post).where(Post.id == post_id).values(**fields)
         )
         await ses.commit()
