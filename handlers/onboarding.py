@@ -106,7 +106,9 @@ async def save_date(message: Message, state: FSMContext):
 async def skip_date(cb: CallbackQuery, state: FSMContext):
     await state.update_data(quit_date=None)
     await complete_registration(cb.from_user.id, state, cb.message.answer)
-
+    await cb.answer()    
+    await cb.message.delete()
+    
 # ─── Финал регистрации ─────────────────────────────────
 async def complete_registration(telegram_id: int, state: FSMContext, reply_fn):
     data = await state.get_data()
