@@ -84,7 +84,7 @@ async def delete_post(cb: CallbackQuery, state: FSMContext):
         return await cb.answer("Пост уже удалён.", show_alert=True)
 
     # Soft‑delete
-    await update_post(post_id, is_deleted=True)
+    await update_post(post_id, deleted=True)
 
     # Modification du message dans le groupe
     await cb.message.bot.edit_message_text(
