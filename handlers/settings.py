@@ -1,6 +1,8 @@
 # handlers/settings.py
-"""Команда /settings : изменить псевдоним, эмодзи, дату отказа и включить/выключить уведомления.
-Важно : aiogram v3 → `InlineKeyboardButton` exige des arguments nommés (`text=…`, `callback_data=…`)."""
+"""
+Команда /settings : изменить псевдоним, эмодзи, дату отказа и включить/выключить уведомления.
+(aiogram v3 ➜ InlineKeyboardButton exige des arguments nommés.)
+"""
 
 import re
 from datetime import date
@@ -18,19 +20,20 @@ from aiogram.types import (
 
 from database.utils import get_user, update_user
 
+# ──────────────────────── Init ────────────────────────
 settings_router = Router()
-PSEUDO_RE = re.compile(r"^(?!/)[^\s]{1,30}$", re.UNICODE)
-
+PSEUDO_RE = re.compile(r"^(?!/)\S{1,30}$", re.UNICODE)   # 1-30 символов, без пробелов
 
 class SettingsState(StatesGroup):
-    pseudo = State()
-    emoji = State()
+    pseudo    = State()
+    emoji     = State()
     quit_date = State()
 
+EMOJIS = ["👤", "😎", "🐶", "🐱", "🦁", "🐺", "🐵", "🐼"]
 
-# ─────────────────────────────── /settings ───────────────────────────────
+# ───────────────────────── /settings ─────────────────────────
 @settings_router.message(Command("settings"))
-async def settings_handler(message: Message) -> None:
+async def settings_handler(message: Message):
     user = await get_user(message.from_user.id)
     if not user:
         return await message.reply("❌ Профиль не найден. Сначала /start!")
@@ -47,62 +50,54 @@ async def settings_handler(message: Message) -> None:
 
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="✏️ Псевдоним", callback_data="edit_pseudo")],
-            [InlineKeyboardButton(text="🙂 Эмодзи", callback_data="edit_emoji")],
-            [InlineKeyboardButton(text="📅 Дата отказа", callback_data="edit_quit_date")],
-            [InlineKeyboardButton(text="🔔 Вкл/Выкл", callback_data="toggle_notifs")],
+            [InlineKeyboardButton(text="✏️ Псевдоним",      callback_data="edit_pseudo")],
+            [InlineKeyboardButton(text="🙂 Эмодзи",         callback_data="edit_emoji")],
+            [InlineKeyboardButton(text="📅 Дата отказа",    callback_data="edit_quit_date")],
+            [InlineKeyboardButton(text="🔔 Вкл / Выкл",     callback_data="toggle_notifs")],
         ]
     )
     await message.answer(text, reply_markup=kb, parse_mode="HTML")
 
-
-# ─────────────────────────────── псевдоним ───────────────────────────────
+# ──────────────────────── Псевдоним ────────────────────────
 @settings_router.callback_query(F.data == "edit_pseudo")
-async def ask_pseudo(cb: CallbackQuery, state: FSMContext) -> None:
+async def ask_pseudo(cb: CallbackQuery, state: FSMContext):
     await cb.message.answer("✏️ Введите новый псевдоним (1-30 символов):")
     await state.set_state(SettingsState.pseudo)
     await cb.answer()
 
-
 @settings_router.message(SettingsState.pseudo)
-async def save_pseudo(msg: Message, state: FSMContext) -> None:
+async def save_pseudo(msg: Message, state: FSMContext):
     pseudo = msg.text.strip()
     if not PSEUDO_RE.match(pseudo):
         return await msg.answer("❌ Неверно. 1-30 символов, без пробелов.")
-
     await update_user(msg.from_user.id, pseudo=pseudo)
     await msg.answer("✅ Псевдоним обновлён!")
     await state.clear()
 
-
-# ─────────────────────────────── эмодзи ───────────────────────────────
-EMOJIS = ["👤", "😎", "🐶", "🐱", "🦁", "🐺"]
-
+# ──────────────────────── Эмодзи ────────────────────────
 @settings_router.callback_query(F.data == "edit_emoji")
-async def choose_emoji(cb: CallbackQuery, state: FSMContext) -> None:
+async def choose_emoji(cb: CallbackQuery, state: FSMContext):
     rows = [[InlineKeyboardButton(text=e, callback_data=f"set_emoji:{e}")] for e in EMOJIS]
-    await cb.message.edit_text("🙂 Выберите эмодзи:", reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
+    await cb.message.edit_text("🙂 Выберите эмодзи:",
+                               reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
     await cb.answer()
 
-
 @settings_router.callback_query(F.data.startswith("set_emoji:"))
-async def save_emoji(cb: CallbackQuery, state: FSMContext) -> None:
+async def save_emoji(cb: CallbackQuery, state: FSMContext):
     emoji = cb.data.split(":", 1)[1]
     await update_user(cb.from_user.id, avatar_emoji=emoji)
     await cb.message.edit_text("✅ Эмодзи обновлён!")
     await cb.answer()
 
-
-# ─────────────────────────────── дата отказа ───────────────────────────────
+# ──────────────────────── Дата отказа ────────────────────────
 @settings_router.callback_query(F.data == "edit_quit_date")
-async def ask_date(cb: CallbackQuery, state: FSMContext) -> None:
+async def ask_date(cb: CallbackQuery, state: FSMContext):
     await cb.message.answer("📅 Новая дата отказа (ГГГГ-ММ-ДД) или 0 — чтобы очистить:")
     await state.set_state(SettingsState.quit_date)
     await cb.answer()
 
-
 @settings_router.message(SettingsState.quit_date)
-async def save_date(msg: Message, state: FSMContext) -> None:
+async def save_date(msg: Message, state: FSMContext):
     raw = msg.text.strip()
     if raw == "0":
         await update_user(msg.from_user.id, quit_date=None)
@@ -116,15 +111,12 @@ async def save_date(msg: Message, state: FSMContext) -> None:
         await msg.answer("✅ Дата обновлена.")
     await state.clear()
 
-
-# ─────────────────────────────── уведомления on/off ───────────────────────────────
+# ──────────────────────── Уведомления ────────────────────────
 @settings_router.callback_query(F.data == "toggle_notifs")
-async def toggle_notifs(cb: CallbackQuery) -> None:
+async def toggle_notifs(cb: CallbackQuery):
     user = await get_user(cb.from_user.id)
     enabled = not getattr(user, "notifications_enabled", True)
     await update_user(cb.from_user.id, notifications_enabled=enabled)
-    await cb.answer(
-        f"🔔 Уведомления {'включены ✅' if enabled else 'выключены ❌'}",
-        show_alert=True,
-    )
+    await cb.answer(f"🔔 Уведомления {'включены ✅' if enabled else 'выключены ❌'}",
+                    show_alert=True)
     await cb.message.delete()
