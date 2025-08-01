@@ -1,10 +1,8 @@
 # handlers/settings.py
-"""Команда /settings : изменить псевдоним, эмодзи, дату отказа, включить/выключить уведомления,
-а также задать период напоминаний.
+"""Команда /settings : изменить псевдоним, эмодзи, дату отказа и включить/выключить уведомления.
+(Управление периодичностью напоминаний перенесено на бэкенд — в UI кнопки «⏰ Период» больше нет.)
 
-aiogram v3 (Pydantic модели) → ВСЕ аргументы в InlineKeyboardButton должны быть ИМЕНОВАННЫМИ,
-иначе ошибка «BaseModel.__init__() takes 1 positional argument but 2 were given».
-"""
+Важно : aiogram v3 → InlineKeyboardButton требует именованных аргументов (`text=…`)."""
 
 import re
 from datetime import date
@@ -30,7 +28,6 @@ class SettingsState(StatesGroup):
     pseudo = State()
     emoji = State()
     quit_date = State()
-    period = State()
 
 
 # ─────────────────────────────────────────────── /settings
@@ -41,15 +38,13 @@ async def settings_handler(message: Message) -> None:
         return await message.reply("❌ Профиль не найден. Сначала /start!")
 
     notif_enabled = getattr(user, "notifications_enabled", True)
-    notif_period = getattr(user, "notification_period", 7)
 
     text = (
         "⚙️ <b>Текущие настройки</b>\n"
         f"• Псевдоним: <code>{user.pseudo}</code>\n"
         f"• Эмодзи: {user.avatar_emoji}\n"
         f"• Дата отказа: {user.quit_date or '—'}\n"
-        f"• Уведомления: {'Вкл' if notif_enabled else 'Выкл'}\n"
-        f"• Период напоминаний: {notif_period} дн."
+        f"• Уведомления: {'Вкл' if notif_enabled else 'Выкл'}"
     )
 
     kb = InlineKeyboardMarkup(
@@ -58,7 +53,6 @@ async def settings_handler(message: Message) -> None:
             [InlineKeyboardButton(text="🙂 Эмодзи", callback_data="edit_emoji")],
             [InlineKeyboardButton(text="📅 Дата отказа", callback_data="edit_quit_date")],
             [InlineKeyboardButton(text="🔔 Вкл/Выкл", callback_data="toggle_notifs")],
-            [InlineKeyboardButton(text="⏰ Период", callback_data="edit_period")],
         ]
     )
     await message.answer(text, reply_markup=kb, parse_mode="HTML")
@@ -86,7 +80,6 @@ async def save_pseudo(msg: Message, state: FSMContext) -> None:
 # ─────────────────────────────────────────────── эмодзи
 EMOJIS = ["👤", "😎", "🐶", "🐱", "🦁", "🐺"]
 
-
 @settings_router.callback_query(F.data == "edit_emoji")
 async def choose_emoji(cb: CallbackQuery, state: FSMContext) -> None:
     rows = [[InlineKeyboardButton(text=e, callback_data=f"set_emoji:{e}")] for e in EMOJIS]
@@ -105,7 +98,7 @@ async def save_emoji(cb: CallbackQuery, state: FSMContext) -> None:
 # ─────────────────────────────────────────────── дата отказа
 @settings_router.callback_query(F.data == "edit_quit_date")
 async def ask_date(cb: CallbackQuery, state: FSMContext) -> None:
-    await cb.message.answer("📅 Новая дата (ГГГГ-ММ-ДД) или 0 — чтобы очистить:")
+    await cb.message.answer("📅 Новая дата отказа (ГГГГ-ММ-ДД) или 0 — чтобы очистить:")
     await state.set_state(SettingsState.quit_date)
     await cb.answer()
 
@@ -134,25 +127,3 @@ async def toggle_notifs(cb: CallbackQuery) -> None:
     await update_user(cb.from_user.id, notifications_enabled=enabled)
     await cb.answer(f"🔔 Уведомления {'включены ✅' if enabled else 'выключены ❌'}", show_alert=True)
     await cb.message.delete()
-
-
-# ─────────────────────────────────────────────── период напоминаний
-@settings_router.callback_query(F.data == "edit_period")
-async def ask_period(cb: CallbackQuery, state: FSMContext) -> None:
-    await cb.message.answer("⏰ Новый период (дней, например 7):")
-    await state.set_state(SettingsState.period)
-    await cb.answer()
-
-
-@settings_router.message(SettingsState.period)
-async def save_period(msg: Message, state: FSMContext) -> None:
-    try:
-        days = int(msg.text.strip())
-        if days < 1:
-            raise ValueError
-    except ValueError:
-        return await msg.answer("❌ Введите положительное число.")
-
-    await update_user(msg.from_user.id, notification_period=days)
-    await msg.answer("✅ Период обновлён.")
-    await state.clear()

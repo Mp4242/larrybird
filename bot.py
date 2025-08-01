@@ -18,6 +18,19 @@ from sqlalchemy import select, func
 from database.milestone_like import MilestoneLike            
 from aiogram import F                                           
 
+from aiogram.types import BotCommand, BotCommandScopeDefault  # new import
+
+DEFAULT_COMMANDS = [
+    BotCommand(command="start",    description="🚀 Главное меню"),
+    BotCommand(command="sos",      description="🆘 Написать SOS"),
+    BotCommand(command="win",      description="🏆 Поделиться WIN"),
+    BotCommand(command="counter",  description="📊 Мой счётчик"),
+    BotCommand(command="posts",    description="🗑 Мои сообщения"),
+    BotCommand(command="settings", description="⚙️ Настройки"),
+]
+
+async def set_bot_commands(bot: Bot) -> None:
+    await bot.set_my_commands(DEFAULT_COMMANDS, BotCommandScopeDefault())
 
 logging.basicConfig(level=logging.INFO)
 
@@ -93,6 +106,7 @@ async def start_webhook():
 
 async def main():
     asyncio.create_task(start_webhook())  # Optionnel si monet
+    await set_bot_commands(bot)
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
