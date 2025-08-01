@@ -54,7 +54,8 @@ async def get_posts_by_user(user_id: int) -> list[Post]:
         result = await s.execute(
             select(Post)
             .where(
-                Post.author_id == user_id,        # ← posts de cet utilisateur
+                Post.author_id == user_id, 
+                Post.parent_id.is_(None),  # 👈 racines only
                 Post.reply_count.is_not(None),    # ← uniquement les threads racine
                 Post.deleted.is_(False)           # ← pas déjà supprimés
             )
