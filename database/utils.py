@@ -49,15 +49,18 @@ async def update_user(telegram_id: int, **kwargs) -> None:
 
 
 # ───────────────────────────────  POST  ───────────────────────────────────
-async def get_posts_by_user(user_id: int, *, only_original: bool = False):
-    async with get_session() as ses:
-        stmt = select(Post).where(
-            Post.author_id == user_id,
-            Post.deleted.is_(False)
+async def get_posts_by_user(user_id: int) -> list[Post]:
+    async with get_session() as s:
+        result = await s.execute(
+            select(Post)
+            .where(
+                Post.author_id == user_id,        # ← posts de cet utilisateur
+                Post.reply_count.is_not(None),    # ← uniquement les threads racine
+                Post.deleted.is_(False)           # ← pas déjà supprimés
+            )
+            .order_by(Post.created_at.desc())
         )
-        if only_original:
-            stmt = stmt.where(Post.parent_id.is_(None))
-        return (await ses.execute(stmt)).scalars().all()
+        return result.scalars().all()
 
 async def get_post_by_id(post_id: int) -> Post | None:
     async with get_session() as ses:

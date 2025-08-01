@@ -27,6 +27,9 @@ def post_inline_keyboard(user_id: int, message_id: int) -> InlineKeyboardMarkup:
     """
     Deux boutons : ✍️ Ответить et 🤝 Поддержать
     """
+from aiogram.types import InlineKeyboardButton
+
+def post_inline_keyboard(user_id: int, message_id: int):
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [

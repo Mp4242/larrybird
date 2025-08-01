@@ -201,24 +201,15 @@ def link_to_post(msg_id: int) -> str:
 def deep_link(post_id: int) -> str:
     return f"https://t.me/{BOT_USERNAME.lstrip('@')}?start=reply_{post_id}"
 
-async def warn_private(bot, tg_id: int, text: str) -> None:
-    """
-    Essaie d’envoyer un DM. S’il est impossible (user n’a jamais cliqué « Start »),
-    on reste silencieux : le deep-link sera proposé ailleurs.
-    """
+async def warn_private(bot, tg_id: int, text: str):
     try:
         await bot.send_message(tg_id, text)
     except TelegramForbiddenError:
-        pass  # on ne pollue pas le topic
+        pass   # on ne spamme pas le groupe
 
 async def profile_ok(user: User | None, bot, tg_id: int) -> bool:
-    """
-    Retourne True si le profil est complet, sinon envoie un avertissement privé
-    et retourne False.
-    """
     if not user or not user.pseudo or not user.avatar_emoji:
-        await warn_private(bot, tg_id,
-                           "⚠️ Сначала создай профиль → /start")
+        await warn_private(bot, tg_id, "⚠️ Сначала создай профиль → /start")
         return False
     return True
 
