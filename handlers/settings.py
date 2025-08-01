@@ -1,8 +1,6 @@
 # handlers/settings.py
 """Команда /settings : изменить псевдоним, эмодзи, дату отказа и включить/выключить уведомления.
-(Управление периодичностью напоминаний перенесено на бэкенд — в UI кнопки «⏰ Период» больше нет.)
-
-Важно : aiogram v3 → InlineKeyboardButton требует именованных аргументов (`text=…`)."""
+Важно : aiogram v3 → `InlineKeyboardButton` exige des arguments nommés (`text=…`, `callback_data=…`)."""
 
 import re
 from datetime import date
@@ -30,7 +28,7 @@ class SettingsState(StatesGroup):
     quit_date = State()
 
 
-# ─────────────────────────────────────────────── /settings
+# ─────────────────────────────── /settings ───────────────────────────────
 @settings_router.message(Command("settings"))
 async def settings_handler(message: Message) -> None:
     user = await get_user(message.from_user.id)
@@ -58,7 +56,7 @@ async def settings_handler(message: Message) -> None:
     await message.answer(text, reply_markup=kb, parse_mode="HTML")
 
 
-# ─────────────────────────────────────────────── псевдоним
+# ─────────────────────────────── псевдоним ───────────────────────────────
 @settings_router.callback_query(F.data == "edit_pseudo")
 async def ask_pseudo(cb: CallbackQuery, state: FSMContext) -> None:
     await cb.message.answer("✏️ Введите новый псевдоним (1-30 символов):")
@@ -77,7 +75,7 @@ async def save_pseudo(msg: Message, state: FSMContext) -> None:
     await state.clear()
 
 
-# ─────────────────────────────────────────────── эмодзи
+# ─────────────────────────────── эмодзи ───────────────────────────────
 EMOJIS = ["👤", "😎", "🐶", "🐱", "🦁", "🐺"]
 
 @settings_router.callback_query(F.data == "edit_emoji")
@@ -89,13 +87,13 @@ async def choose_emoji(cb: CallbackQuery, state: FSMContext) -> None:
 
 @settings_router.callback_query(F.data.startswith("set_emoji:"))
 async def save_emoji(cb: CallbackQuery, state: FSMContext) -> None:
-    emoji = cb.data.split(":")[1]
+    emoji = cb.data.split(":", 1)[1]
     await update_user(cb.from_user.id, avatar_emoji=emoji)
     await cb.message.edit_text("✅ Эмодзи обновлён!")
     await cb.answer()
 
 
-# ─────────────────────────────────────────────── дата отказа
+# ─────────────────────────────── дата отказа ───────────────────────────────
 @settings_router.callback_query(F.data == "edit_quit_date")
 async def ask_date(cb: CallbackQuery, state: FSMContext) -> None:
     await cb.message.answer("📅 Новая дата отказа (ГГГГ-ММ-ДД) или 0 — чтобы очистить:")
@@ -119,11 +117,14 @@ async def save_date(msg: Message, state: FSMContext) -> None:
     await state.clear()
 
 
-# ─────────────────────────────────────────────── уведомления on/off
+# ─────────────────────────────── уведомления on/off ───────────────────────────────
 @settings_router.callback_query(F.data == "toggle_notifs")
 async def toggle_notifs(cb: CallbackQuery) -> None:
     user = await get_user(cb.from_user.id)
     enabled = not getattr(user, "notifications_enabled", True)
     await update_user(cb.from_user.id, notifications_enabled=enabled)
-    await cb.answer(f"🔔 Уведомления {'включены ✅' if enabled else 'выключены ❌'}", show_alert=True)
+    await cb.answer(
+        f"🔔 Уведомления {'включены ✅' if enabled else 'выключены ❌'}",
+        show_alert=True,
+    )
     await cb.message.delete()
