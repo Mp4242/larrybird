@@ -8,6 +8,7 @@ from database import async_session
 from database.user import User
 from database.post import Post
 from sqlalchemy import select, func 
+import re 
 
 # ───────────────────────────────  SESSION  ────────────────────────────────
 @asynccontextmanager
