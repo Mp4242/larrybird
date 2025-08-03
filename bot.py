@@ -1,13 +1,11 @@
-# bot.py — version complétée (webhook + stub user)
-# ▸ copie/colle intégrale puis « sudo systemctl restart trezvbot »
-
+# bot.py — version corrigée (BotCommand kwargs)
 import asyncio, logging, random
 from datetime import date
 
 from aiogram import Bot, Dispatcher, F
+from aiogram.client.default import DefaultBotProperties
 from aiogram.enums.parse_mode import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.client.default import DefaultBotProperties
 from aiogram.types import BotCommand, BotCommandScopeDefault
 from aiohttp import web
 import aiocron
@@ -16,8 +14,9 @@ from sqlalchemy import select, func
 from config import TOKEN, MILESTONES, SUPER_GROUP, TOPICS
 from database.database import async_session
 from database.user import User
-from database.utils import get_user, create_user_stub  # ← helpers DB
+from database.utils import get_user, create_user_stub
 from database.milestone_like import MilestoneLike
+
 from handlers import (
     onboarding_router, main_router, counter_router, replies_router,
     posts_router, settings_router
@@ -37,14 +36,14 @@ for r in (
 ):
     dp.include_router(r)
 
-# ──────────────────────────── Commands
+# ──────────────────────────── Commands (kwargs)
 DEFAULT_COMMANDS = [
-    BotCommand("start",    "🚀 Главное меню"),
-    BotCommand("sos",      "🆘 Написать SOS"),
-    BotCommand("win",      "🏆 Поделиться WIN"),
-    BotCommand("counter",  "📊 Мой счётчик"),
-    BotCommand("posts",    "🗑 Мои сообщения"),
-    BotCommand("settings", "⚙️ Настройки"),
+    BotCommand(command="start",    description="🚀 Главное меню"),
+    BotCommand(command="sos",      description="🆘 Написать SOS"),
+    BotCommand(command="win",      description="🏆 Поделиться WIN"),
+    BotCommand(command="counter",  description="📊 Мой счётчик"),
+    BotCommand(command="posts",    description="🗑 Мои сообщения"),
+    BotCommand(command="settings", description="⚙️ Настройки"),
 ]
 
 async def set_bot_commands(bot_: Bot):
@@ -91,15 +90,13 @@ async def motivation_notifs():
             if u.quit_date and (date.today() - u.quit_date).days % u.notification_period == 0:
                 await bot.send_message(u.telegram_id, random.choice(QUOTES))
 
-# ──────────────────────────── Webhook (Tribute)
+# ──────────────────────────── Webhook Tribute
 async def handle_webhook(request: web.Request):
     data = await request.json()
     logging.warning("WEBHOOK DATA %s", data)
-
     if data.get("status") == "paid":
-        uid = int(data.get("source", 0))  # ?source=<tg_id>
+        uid = int(data.get("source", 0))
         if uid:
-            # stub user if not exists
             if not await get_user(uid):
                 await create_user_stub(uid)
             await bot.add_chat_member(SUPER_GROUP, uid)
