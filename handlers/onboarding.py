@@ -36,16 +36,24 @@ DATE_KB = InlineKeyboardMarkup(
 
 # ─────────────────────────────────────────────────────── /start
 @onboarding_router.message(F.text == "/start")
-async def cmd_start(message: Message, state: FSMContext):
-    async with async_session() as ses:
-        if await ses.scalar(select(User.id).where(User.telegram_id == message.from_user.id)):
-            return await message.answer("👋 Ты уже в клубе. /help — список команд.")
+async def cmd_start(msg: Message, state: FSMContext):
+    user = await get_user(msg.from_user.id)
 
-    await message.answer(
-        "👋 Добро пожаловать в TREZV!\n\n"
-        "Сначала выбери псевдоним (до 30 символов, без пробелов):"
-    )
-    await state.set_state(OnboardingState.pseudo)
+    if not user:                       # pas encore payé
+        await msg.answer(
+            "🔥 Приватный клуб отказа от травы.\n"
+            "Посмотри демо или вступай со скидкой 70 % 👇",
+            reply_markup=WELCOME_KB
+        )
+        return
+
+    if not user.pseudo:                # payé mais pas profilé
+        await msg.answer("✏️ Введи псевдоним (1–30 символов):")
+        await state.set_state(OnboardingState.pseudo)
+        return
+
+    await msg.answer("👋 Ты уже в клубе. /help — команды.")
+
 
 # ────────────────────────────────────────────────── PSEUDO
 @onboarding_router.message(StateFilter(OnboardingState.pseudo))

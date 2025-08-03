@@ -40,7 +40,11 @@ async def create_user(telegram_id: int, pseudo: str, emoji: str = "👤") -> Use
         await ses.commit()
         return user
 
-
+async def create_user_stub(tg_id: int):
+    async with async_session() as ses:
+        ses.add(User(telegram_id=tg_id))
+        await ses.commit()
+        
 async def update_user(telegram_id: int, **kwargs) -> None:
     async with get_session() as ses:
         stmt = update(User).where(User.telegram_id == telegram_id).values(**kwargs)

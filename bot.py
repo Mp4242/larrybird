@@ -1,66 +1,63 @@
-import asyncio, logging
-import random  # Ajout pour choice quotes
-from datetime import date, timedelta  # Pour paid_until si monet
+# bot.py — version complétée (webhook + stub user)
+# ▸ copie/colle intégrale puis « sudo systemctl restart trezvbot »
 
-from aiogram import Bot, Dispatcher
+import asyncio, logging, random
+from datetime import date
+
+from aiogram import Bot, Dispatcher, F
 from aiogram.enums.parse_mode import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.client.default import DefaultBotProperties
+from aiogram.types import BotCommand, BotCommandScopeDefault
+from aiohttp import web
 import aiocron
+from sqlalchemy import select, func
 
-from handlers import onboarding_router, main_router, counter_router, replies_router, posts_router, settings_router  # Ajoute posts/settings
 from config import TOKEN, MILESTONES, SUPER_GROUP, TOPICS
 from database.database import async_session
 from database.user import User
-
-from handlers.milestones import milestone_router, milestone_kb  
-from sqlalchemy import select, func
-from database.milestone_like import MilestoneLike            
-from aiogram import F                                           
-
+from database.utils import get_user, create_user_stub  # ← helpers DB
+from database.milestone_like import MilestoneLike
+from handlers import (
+    onboarding_router, main_router, counter_router, replies_router,
+    posts_router, settings_router
+)
+from handlers.milestones import milestone_router, milestone_kb
 from handlers.pay import pay_router
 
-from aiogram.types import BotCommand, BotCommandScopeDefault  # new import
-
-from aiohttp import web
-
-DEFAULT_COMMANDS = [
-    BotCommand(command="start",    description="🚀 Главное меню"),
-    BotCommand(command="sos",      description="🆘 Написать SOS"),
-    BotCommand(command="win",      description="🏆 Поделиться WIN"),
-    BotCommand(command="counter",  description="📊 Мой счётчик"),
-    BotCommand(command="posts",    description="🗑 Мои сообщения"),
-    BotCommand(command="settings", description="⚙️ Настройки"),
-]
-
-async def set_bot_commands(bot: Bot) -> None:
-    await bot.set_my_commands(DEFAULT_COMMANDS, BotCommandScopeDefault())
-
+# ──────────────────────────── Bot & Dispatcher
 logging.basicConfig(level=logging.INFO)
 
-bot = Bot(
-    token=TOKEN,
-    default=DefaultBotProperties(parse_mode=ParseMode.HTML)
-)
+bot = Bot(TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 
 dp = Dispatcher(storage=MemoryStorage())
-dp.include_router(onboarding_router)
-dp.include_router(main_router)
-dp.include_router(replies_router)
-dp.include_router(milestone_router)
-dp.include_router(counter_router)
-dp.include_router(posts_router)  # Nouveau
-dp.include_router(settings_router)  # Nouveau
-dp.include_router(pay_router)
+for r in (
+    onboarding_router, main_router, replies_router, milestone_router,
+    counter_router, posts_router, settings_router, pay_router,
+):
+    dp.include_router(r)
 
+# ──────────────────────────── Commands
+DEFAULT_COMMANDS = [
+    BotCommand("start",    "🚀 Главное меню"),
+    BotCommand("sos",      "🆘 Написать SOS"),
+    BotCommand("win",      "🏆 Поделиться WIN"),
+    BotCommand("counter",  "📊 Мой счётчик"),
+    BotCommand("posts",    "🗑 Мои сообщения"),
+    BotCommand("settings", "⚙️ Настройки"),
+]
+
+async def set_bot_commands(bot_: Bot):
+    await bot_.set_my_commands(DEFAULT_COMMANDS, BotCommandScopeDefault())
+
+# ──────────────────────────── Quotes
 QUOTES = [
     "Ты сильнее, чем думаешь! 💪",
     "Каждый день без травы - победа! 🏆",
     "Продолжай, ты на правильном пути! 🌟",
-    # Добавьте больше в config.yml
 ]
 
-# ─── CRON : checkpoints sobriety
+# ──────────────────────────── Sobriety checkpoints (cron)
 @aiocron.crontab("30 0 * * *")
 async def sobriety_check():
     async with async_session() as ses:
@@ -71,48 +68,57 @@ async def sobriety_check():
             days = (date.today() - u.quit_date).days
             next_ms = next((m for m in MILESTONES if m > u.last_checkpoint), None)
             if next_ms and days >= next_ms:
-                await bot.send_message(u.telegram_id,
-                    f"🎉 Поздравляю! Сегодня {next_ms} дней без травы.")
+                await bot.send_message(u.telegram_id, f"🎉 Поздравляю! Сегодня {next_ms} дней без травы.")
                 sent = await bot.send_message(
-                    SUPER_GROUP, TOPICS["wins"],
+                    SUPER_GROUP,
+                    TOPICS["wins"],
                     f"🥳 {u.avatar_emoji} <b>{u.pseudo}</b> празднует <b>{next_ms} д.</b>",
                     parse_mode="HTML",
-                    reply_markup=milestone_kb(0)  # placeholder
+                    reply_markup=milestone_kb(0),
                 )
                 await sent.edit_reply_markup(milestone_kb(sent.message_id))
                 u.last_checkpoint = next_ms
         await ses.commit()
 
-# ─── CRON : motivation notifs (périodique par user)
-@aiocron.crontab("0 9 * * *")  # Quotidien 9h, filtre par period
+# ──────────────────────────── Motivation quotes (cron)
+@aiocron.crontab("0 9 * * *")
 async def motivation_notifs():
     async with async_session() as ses:
-        users = (await ses.execute(select(User).where(User.notifications_enabled == True))).scalars().all()
+        users = (
+            await ses.execute(select(User).where(User.notifications_enabled == True))
+        ).scalars().all()
         for u in users:
             if u.quit_date and (date.today() - u.quit_date).days % u.notification_period == 0:
-                quote = random.choice(QUOTES)
-                await bot.send_message(u.telegram_id, quote)
+                await bot.send_message(u.telegram_id, random.choice(QUOTES))
 
-async def handle_webhook(request):
+# ──────────────────────────── Webhook (Tribute)
+async def handle_webhook(request: web.Request):
     data = await request.json()
-    print("WEBHOOK DATA:", data)                # ← log brut
+    logging.warning("WEBHOOK DATA %s", data)
+
     if data.get("status") == "paid":
-        uid = int(data.get("source", 0))
-        await bot.add_chat_member(SUPER_GROUP, uid)
-        await bot.send_message(uid, "🎉 Добро пожаловать! Создай профиль → /start")
+        uid = int(data.get("source", 0))  # ?source=<tg_id>
+        if uid:
+            # stub user if not exists
+            if not await get_user(uid):
+                await create_user_stub(uid)
+            await bot.add_chat_member(SUPER_GROUP, uid)
+            await bot.send_message(uid, "🎉 Платёж прошёл! Создай профиль → /start")
     return web.Response(text="ok")
-    
+
+# ──────────────────────────── aiohttp app
 app = web.Application()
-app.add_routes([web.post('/webhook', handle_webhook)])
+app.add_routes([web.post("/webhook", handle_webhook)])
 
 async def start_webhook():
     runner = web.AppRunner(app)
     await runner.setup()
-    site = web.TCPSite(runner, '0.0.0.0', 8080)
+    site = web.TCPSite(runner, "0.0.0.0", 8080)
     await site.start()
 
+# ──────────────────────────── Main
 async def main():
-    asyncio.create_task(start_webhook())  # Optionnel si monet
+    asyncio.create_task(start_webhook())
     await set_bot_commands(bot)
     await dp.start_polling(bot)
 
