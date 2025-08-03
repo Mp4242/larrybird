@@ -1,6 +1,7 @@
 # bot.py — version corrigée (BotCommand kwargs)
 import asyncio, logging, random
 from datetime import date
+from datetime import datetime, timedelta 
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.client.default import DefaultBotProperties
@@ -96,14 +97,24 @@ async def handle_webhook(request: web.Request):
     logging.warning("WEBHOOK DATA %s", data)
 
     if data.get("name") == "new_subscription":
-        uid = int(data["payload"]["telegram_user_id"])  # ← id TG
+        uid = int(data["payload"]["telegram_user_id"])
         if uid:
             if not await get_user(uid):
-                await create_user_stub(uid)             # pseudo=None
-            await bot.add_chat_member(SUPER_GROUP, uid)
+                await create_user_stub(uid)
+
+            # ——— lien d’invitation 10 min / 1 usage
+            invite = await bot.create_chat_invite_link(
+                SUPER_GROUP,
+                expire_date=int((datetime.utcnow() + timedelta(minutes=20)).timestamp()),
+                member_limit=1,
+            )
+
             await bot.send_message(
                 uid,
-                "🎉 Платёж прошёл! Создай профиль → /start"
+                f"🎉 Платёж прошёл!\n"
+                f"👉 <a href=\"{invite.invite_link}\">Вступить в группу</a>\n\n"
+                "После входа создай профиль → /start",
+                parse_mode="HTML",
             )
     return web.Response(text="ok")
 
