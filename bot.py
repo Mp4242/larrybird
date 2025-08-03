@@ -95,12 +95,13 @@ async def motivation_notifs():
 
 async def handle_webhook(request):
     data = await request.json()
+    print("WEBHOOK DATA:", data)                # ← log brut
     if data.get("status") == "paid":
-        uid = int(data["metadata"]["uid"])
+        uid = int(data.get("source", 0))
         await bot.add_chat_member(SUPER_GROUP, uid)
         await bot.send_message(uid, "🎉 Добро пожаловать! Создай профиль → /start")
-    return web.Response(status=200)
-
+    return web.Response(text="ok")
+    
 app = web.Application()
 app.add_routes([web.post('/webhook', handle_webhook)])
 
