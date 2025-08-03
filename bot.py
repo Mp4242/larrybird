@@ -18,7 +18,11 @@ from sqlalchemy import select, func
 from database.milestone_like import MilestoneLike            
 from aiogram import F                                           
 
+from handlers.pay import pay_router
+
 from aiogram.types import BotCommand, BotCommandScopeDefault  # new import
+
+from aiohttp import web
 
 DEFAULT_COMMANDS = [
     BotCommand(command="start",    description="🚀 Главное меню"),
@@ -47,6 +51,7 @@ dp.include_router(milestone_router)
 dp.include_router(counter_router)
 dp.include_router(posts_router)  # Nouveau
 dp.include_router(settings_router)  # Nouveau
+dp.include_router(pay_router)
 
 QUOTES = [
     "Ты сильнее, чем думаешь! 💪",
@@ -88,11 +93,12 @@ async def motivation_notifs():
                 quote = random.choice(QUOTES)
                 await bot.send_message(u.telegram_id, quote)
 
-# Webhook Tribute (si monet, de précédent)
-from aiohttp import web
-
 async def handle_webhook(request):
-    # ... comme précédent, russe messages si besoin ...
+    data = await request.json()
+    if data.get("status") == "paid":
+        uid = int(data["metadata"]["uid"])
+        await bot.add_chat_member(SUPER_GROUP, uid)
+        await bot.send_message(uid, "🎉 Добро пожаловать! Создай профиль → /start")
     return web.Response(status=200)
 
 app = web.Application()

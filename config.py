@@ -25,3 +25,6 @@ AVG_HOURS_DAY = cfg.get("avg_hours_day", 5)
 AVG_COST_DAY = cfg.get("avg_cost_day", 5)
 AVG_NEURONS_DAY = cfg.get("avg_neurons_day", 10000)
 MILESTONES = cfg.get("milestones", [7, 30, 60, 90, 100, 180, 365])
+
+# config.py
+TRIBUTE_URL_TEMPLATE = "https://t.me/tribute/app?startapp=swg0"
