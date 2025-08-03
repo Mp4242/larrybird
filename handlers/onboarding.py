@@ -49,7 +49,7 @@ WELCOME_KB = InlineKeyboardMarkup(
 async def cmd_start(msg: Message, state: FSMContext):
     user = await get_user(msg.from_user.id)
 
-    # ① pas encore payé → propose pay/demo
+    # ① Pas encore abonné → pay/demo
     if not user:
         await msg.answer(
             "🔥 Приватный клуб отказа от травы.\n"
@@ -58,15 +58,14 @@ async def cmd_start(msg: Message, state: FSMContext):
         )
         return
 
-    # ② payé mais profil не заполнен
-    if not user.pseudo:
+    # ② Abonné mais профиль НЕ заполнен
+    if user.pseudo.startswith("_anon"):
         await msg.answer("✏️ Введи псевдоним (1–30 символов):")
         await state.set_state(OnboardingState.pseudo)
         return
 
-    # ③ уже в клубе
-    await msg.answer("👋 Ты уже в клубе. /help — команды.")
-
+    # ③ Уже в клубе
+    await msg.answer("👋 Ты уже в клубе. /help — список команд.")
 
 # ────────────────────────────────────────────────── PSEUDO
 @onboarding_router.message(StateFilter(OnboardingState.pseudo))

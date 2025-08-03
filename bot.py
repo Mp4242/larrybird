@@ -24,6 +24,7 @@ from handlers import (
 )
 from handlers.milestones import milestone_router, milestone_kb
 from handlers.pay import pay_router
+from handlers.help import help_router   # import
 
 # ──────────────────────────── Bot & Dispatcher
 logging.basicConfig(level=logging.INFO)
@@ -33,7 +34,7 @@ bot = Bot(TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp = Dispatcher(storage=MemoryStorage())
 for r in (
     onboarding_router, main_router, replies_router, milestone_router,
-    counter_router, posts_router, settings_router, pay_router,
+    counter_router, posts_router, settings_router, pay_router, help_router,
 ):
     dp.include_router(r)
 
