@@ -94,13 +94,17 @@ async def motivation_notifs():
 async def handle_webhook(request: web.Request):
     data = await request.json()
     logging.warning("WEBHOOK DATA %s", data)
-    if data.get("status") == "paid":
-        uid = int(data.get("source", 0))
+
+    if data.get("name") == "new_subscription":
+        uid = int(data["payload"]["telegram_user_id"])  # ← id TG
         if uid:
             if not await get_user(uid):
-                await create_user_stub(uid)
+                await create_user_stub(uid)             # pseudo=None
             await bot.add_chat_member(SUPER_GROUP, uid)
-            await bot.send_message(uid, "🎉 Платёж прошёл! Создай профиль → /start")
+            await bot.send_message(
+                uid,
+                "🎉 Платёж прошёл! Создай профиль → /start"
+            )
     return web.Response(text="ok")
 
 # ──────────────────────────── aiohttp app
