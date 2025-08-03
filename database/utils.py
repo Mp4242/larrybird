@@ -7,7 +7,7 @@ from sqlalchemy.exc import NoResultFound
 from database import async_session
 from database.user import User
 from database.post import Post
-
+from sqlalchemy import select, func 
 
 # ───────────────────────────────  SESSION  ────────────────────────────────
 @asynccontextmanager
@@ -61,7 +61,7 @@ async def create_user_stub(tg_id: int) -> None:
             )
         )
         await ses.commit()
-        
+
 async def update_user(telegram_id: int, **kwargs) -> None:
     async with get_session() as ses:
         stmt = update(User).where(User.telegram_id == telegram_id).values(**kwargs)
