@@ -36,24 +36,35 @@ DATE_KB = InlineKeyboardMarkup(
     ]
 )
 
+# ─── clavier accueil (avant cmd_start) ───
+WELCOME_KB = InlineKeyboardMarkup(
+    inline_keyboard=[
+        [InlineKeyboardButton(text="💳 Вступить за 149 ₽", callback_data="pay")],
+        [InlineKeyboardButton(text="👀 Посмотреть демо",    callback_data="demo")],
+    ]
+)
+
 # ─────────────────────────────────────────────────────── /start
 @onboarding_router.message(F.text == "/start")
 async def cmd_start(msg: Message, state: FSMContext):
     user = await get_user(msg.from_user.id)
 
-    if not user:                       # pas encore payé
+    # ① pas encore payé → propose pay/demo
+    if not user:
         await msg.answer(
             "🔥 Приватный клуб отказа от травы.\n"
             "Посмотри демо или вступай со скидкой 70 % 👇",
-            reply_markup=WELCOME_KB
+            reply_markup=WELCOME_KB,
         )
         return
 
-    if not user.pseudo:                # payé mais pas profilé
+    # ② payé mais profil не заполнен
+    if not user.pseudo:
         await msg.answer("✏️ Введи псевдоним (1–30 символов):")
         await state.set_state(OnboardingState.pseudo)
         return
 
+    # ③ уже в клубе
     await msg.answer("👋 Ты уже в клубе. /help — команды.")
 
 
