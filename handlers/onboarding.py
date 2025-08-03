@@ -14,6 +14,8 @@ import re
 from database.database import async_session
 from database.user import User
 
+from database.utils import get_user
+
 onboarding_router = Router()
 
 # ─── FSM ────────────────────────────────────────────────
