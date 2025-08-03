@@ -40,9 +40,26 @@ async def create_user(telegram_id: int, pseudo: str, emoji: str = "👤") -> Use
         await ses.commit()
         return user
 
-async def create_user_stub(tg_id: int):
+async def create_user_stub(tg_id: int) -> None:
+    """
+    Crée un user « _anon », « _anon2 », « _anon3 », … sans collision.
+    """
     async with async_session() as ses:
-        ses.add(User(telegram_id=tg_id))
+        # suffixe le plus haut déjà présent
+        max_n = await ses.scalar(
+            select(func.max(
+                func.substr(User.pseudo, 6).cast(int)   # 6 = len('_anon')
+            )).where(User.pseudo.like("_anon%"))
+        )
+        next_pseudo = "_anon" if max_n is None else f"_anon{max_n + 1}"
+
+        ses.add(
+            User(
+                telegram_id=tg_id,
+                pseudo=next_pseudo,
+                avatar_emoji="👤"          # défaut
+            )
+        )
         await ses.commit()
         
 async def update_user(telegram_id: int, **kwargs) -> None:
