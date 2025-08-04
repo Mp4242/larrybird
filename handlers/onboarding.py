@@ -14,6 +14,7 @@ import re
 from database.database import async_session
 from database.user import User
 
+from sqlalchemy import select        # 追加 к прочим импортам SQLAlchemy
 from database.utils import get_user
 
 onboarding_router = Router()
@@ -68,6 +69,12 @@ async def cmd_start(msg: Message, state: FSMContext):
     await msg.answer("👋 Ты уже в клубе. /help — список команд.")
 
 # ────────────────────────────────────────────────── PSEUDO
+# ───────────────────── Отмена, если пользователь ввёл /команду ──────────────
+@onboarding_router.message(StateFilter(OnboardingState.pseudo), F.text.startswith("/"))
+async def cancel_pseudo(msg: Message, state: FSMContext):
+    await state.clear()
+    await msg.answer("Онбординг прерван. Запусти /start заново.")
+
 @onboarding_router.message(StateFilter(OnboardingState.pseudo))
 async def set_pseudo(message: Message, state: FSMContext):
     raw = message.text.strip()
@@ -120,12 +127,25 @@ async def complete_registration(telegram_id: int, state: FSMContext, reply_fn):
         return await reply_fn("⚠️ Онбординг не завершён. /start")
 
     async with async_session() as ses:
-        ses.add(User(
-            telegram_id=telegram_id,
-            pseudo=data["pseudo"],
-            avatar_emoji=data["avatar_emoji"],
-            quit_date=data.get("quit_date")
-        ))
+        # проверяем – есть ли уже «заглушка» для этого telegram_id
+        user: User | None = await ses.scalar(
+            select(User).where(User.telegram_id == telegram_id)
+        )
+
+        if user:                               # запись существует → обновляем
+            user.pseudo        = data["pseudo"]
+            user.avatar_emoji  = data["avatar_emoji"]
+            user.quit_date     = data.get("quit_date")
+        else:                                  # нет записи → создаём новую
+            ses.add(
+                User(
+                    telegram_id   = telegram_id,
+                    pseudo        = data["pseudo"],
+                    avatar_emoji  = data["avatar_emoji"],
+                    quit_date     = data.get("quit_date")
+                )
+            )
+
         await ses.commit()
 
     await reply_fn("✅ Профиль создан!")
