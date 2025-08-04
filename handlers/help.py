@@ -4,21 +4,17 @@ from database.utils import get_user
 
 help_router = Router()
 
-@help_router.message(F.text.in_({"/help", "help"}))
+@help_router.message(F.text == "/help")
 async def cmd_help(msg: Message):
     user = await get_user(msg.from_user.id)
-
-    # profil inexistant OU encore « _anon… » → pas d’accès
-    if not user or user.pseudo.startswith("_anon"):
-        return await msg.answer("❌ Сначала создай профиль → /start")
-
-    # profil ok → liste des commandes
+    if not user or not user.is_member:
+        return await msg.answer("❌ Нет доступа. Сначала оплати подписку → /start")
     await msg.answer(
-        "<b>Команды клуба</b>\n"
-        "/sos – 🆘 попросить помощи\n"
-        "/win – 🏆 поделиться победой\n"
-        "/counter – 📊 мой счётчик дней\n"
-        "/posts – 🗑 мои сообщения\n"
-        "/settings – ⚙️ настройки профиля",
+        "/sos – написать SOS\n"
+        "/win – поделиться победой\n"
+        "/counter – мой счётчик\n"
+        "/posts – мои посты\n"
+        "/settings – настройки\n"
+        "/call – запрос созвона с ментором",
         parse_mode="HTML",
     )

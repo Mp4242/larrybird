@@ -15,3 +15,5 @@ class User(Base):
     last_checkpoint = Column(Integer, default=0)
     notifications_enabled = Column(Boolean, default=True)
     is_sober = Column(Boolean, default=True)
+    is_member       = mapped_column(Boolean, default=False, nullable=False)
+    paid_until      = mapped_column(DateTime, nullable=True)   # optionnel

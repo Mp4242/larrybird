@@ -15,7 +15,7 @@ from sqlalchemy import select, func
 from config import TOKEN, MILESTONES, SUPER_GROUP, TOPICS
 from database.database import async_session
 from database.user import User
-from database.utils import get_user, create_user_stub
+from database.utils import get_user, create_user_stub, update_user
 from database.milestone_like import MilestoneLike
 
 from handlers import (
@@ -94,29 +94,34 @@ async def motivation_notifs():
 
 # ──────────────────────────── Webhook Tribute
 async def handle_webhook(request: web.Request):
+async def handle_webhook(request):
     data = await request.json()
     logging.warning("WEBHOOK DATA %s", data)
 
-    if data.get("name") == "new_subscription":
+    if data.get("name") == "new_subscription":          # Tribute v2
         uid = int(data["payload"]["telegram_user_id"])
-        if uid:
-            if not await get_user(uid):
-                await create_user_stub(uid)
 
-            # ——— lien d’invitation 10 min / 1 usage
-            invite = await bot.create_chat_invite_link(
-                SUPER_GROUP,
-                expire_date=int((datetime.utcnow() + timedelta(minutes=20)).timestamp()),
-                member_limit=1,
-            )
+        # ▸ 1. marquer « membre » (paid_until = +31 jours pour l’exemple)
+        until = datetime.utcnow() + timedelta(days=31)
+        user = await get_user(uid)
+        if user:
+            await update_user(uid, is_member=True, paid_until=until)
+        else:
+            await create_user_stub(uid, is_member=True, paid_until=until)
 
-            await bot.send_message(
-                uid,
-                f"🎉 Платёж прошёл!\n"
-                f"👉 <a href=\"{invite.invite_link}\">Вступить в группу</a>\n\n"
-                "После входа создай профиль → /start",
-                parse_mode="HTML",
-            )
+        # ▸ 2. inviter dans le groupe privé
+        try:
+            await bot.invite_chat_member(SUPER_GROUP, uid)
+        except Exception:
+            pass                                         # déjà invité ?
+
+        # ▸ 3. DM de confirmation
+        await bot.send_message(
+            uid,
+            "🎉 Платёж прошёл! Теперь создай профиль → /start"
+            "\n(Если уже создавал — просто используй команды)"
+        )
+
     return web.Response(text="ok")
 
 # ──────────────────────────── aiohttp app
