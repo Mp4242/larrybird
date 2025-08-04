@@ -13,6 +13,7 @@ from config import SUPER_GROUP, TOPICS, MENTORS
 from database.database import async_session
 from database.user import User
 from database.post import Post
+from database.post_like import PostLike
 
 main_router = Router()
 
@@ -46,6 +47,18 @@ def post_inline_keyboard(user_id: int, message_id: int):
             ]
         ]
     )
+
+def post_inline_keyboard(message_id: int, *, with_support: bool, likes: int = 0):
+    rows = [
+        [InlineKeyboardButton(text="✍️ Ответить",
+                              callback_data=f"reply:{message_id}")],
+    ]
+    if with_support:                                   # ← SOS-тред
+        rows.append([InlineKeyboardButton(text="🤝 Поддержать",
+                                          callback_data=f"support:{message_id}")])
+    rows.append([InlineKeyboardButton(text=f"❤️ {likes}" if likes else "❤️",
+                                      callback_data=f"like:{message_id}")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 def format_sobriety_duration(start_date: date | None) -> str:
     if not start_date:
@@ -107,15 +120,15 @@ async def handle_sos_text(msg: Message, state: FSMContext):
             f"—\n{user.avatar_emoji} {user.pseudo}  | {sobriety}  | 0 ответов"
         )
 
+        # envoi
         sent = await msg.bot.send_message(
-            chat_id=SUPER_GROUP,
+            SUPER_GROUP,
             message_thread_id=TOPICS["sos"],
             text=full_text,
-            reply_markup=post_inline_keyboard(user.id, message_id:=0)  # placeholder
+            reply_markup=post_inline_keyboard(message_id=0, with_support=True, likes=0)
         )
-        # Ajoute les vrais boutons après avoir l’ID Telegram
         await sent.edit_reply_markup(
-            reply_markup=post_inline_keyboard(user.id, sent.message_id)
+            post_inline_keyboard(sent.message_id, with_support=True, likes=0)
         )
 
         ses.add(Post(id=sent.message_id, author_id=user.id,
@@ -144,13 +157,13 @@ async def handle_win_text(msg: Message, state: FSMContext):
         )
 
         sent = await msg.bot.send_message(
-            chat_id=SUPER_GROUP,
+            SUPER_GROUP,
             message_thread_id=TOPICS["wins"],
             text=full_text,
-            reply_markup=post_inline_keyboard(user.id, message_id:=0)
+            reply_markup=post_inline_keyboard(message_id=0, with_support=False, likes=0)
         )
         await sent.edit_reply_markup(
-            reply_markup=post_inline_keyboard(user.id, sent.message_id)
+            post_inline_keyboard(sent.message_id, with_support=False, likes=0)
         )
 
         ses.add(Post(id=sent.message_id, author_id=user.id,

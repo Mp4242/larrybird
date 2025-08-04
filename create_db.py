@@ -4,7 +4,7 @@ import asyncio
 from database.database import engine, Base
 
 # 🚨 Ces imports explicites sont nécessaires !
-from database import user, post, milestone_like  # ajoute ici chaque module contenant un modèle
+from database import user, post, milestone_like, post_like # ajoute ici chaque module contenant un modèle
 
 
 async def create() -> None:

@@ -12,6 +12,7 @@ from aiogram.types import (
     InlineKeyboardMarkup,
     InlineKeyboardButton,
 )
+from database.post_like import PostLike
 from aiogram.fsm.context import FSMContext
 from aiogram.filters import StateFilter
 from sqlalchemy import select
@@ -23,6 +24,7 @@ from database.utils import (
     update_post,
 )
 from database.post import Post
+from sqlalchemy import func
 from handlers.main import post_inline_keyboard, format_sobriety_duration
 from config import SUPER_GROUP
 
