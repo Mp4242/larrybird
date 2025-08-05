@@ -11,11 +11,13 @@ from sqlalchemy import select
 from datetime import datetime
 import re
 
+from __future__ import annotations
+
 from database.database import async_session
 from database.user import User
 
 from sqlalchemy import select        # 追加 к прочим импортам SQLAlchemy
-from database.utils import get_user
+from database.utils import get_user, free_slots_left, update_user
 
 onboarding_router = Router()
 
@@ -40,7 +42,7 @@ DATE_KB = InlineKeyboardMarkup(
 # ─── clavier accueil (avant cmd_start) ───
 WELCOME_KB = InlineKeyboardMarkup(
     inline_keyboard=[
-        [InlineKeyboardButton(text="💳 Вступить за 149 ₽", callback_data="pay")],
+        [InlineKeyboardButton(text="💳 Вступить за 100 ₽", callback_data="pay")],
         [InlineKeyboardButton(text="👀 Посмотреть демо",    callback_data="demo")],
     ]
 )
@@ -52,11 +54,26 @@ async def cmd_start(msg: Message, state: FSMContext):
 
     # ① Pas encore abonné → pay/demo
     if not user:
-        await msg.answer(
-            "🔥 Приватный клуб отказа от травы.\n"
-            "Посмотри демо или вступай со скидкой 70 % 👇",
-            reply_markup=WELCOME_KB,
-        )
+
+        slots = await free_slots_left()
+        if slots:               # places gratuites restantes
+            kb = InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [InlineKeyboardButton(
+                        text=f"🎁 Войти бесплатно · осталось {slots}",
+                        callback_data="join_free")],
+                    [InlineKeyboardButton(text="👀 Посмотреть демо", callback_data="demo")]
+                ]
+            )
+            await msg.answer(
+                "🔥 Приватный клуб TREZV\n"
+                f"Первые 100 получают доступ навсегда.\n"
+                f"Осталось <b>{slots}</b> мест 👇",
+                reply_markup=kb, parse_mode="HTML")
+        else:                   # quota épuisé → payant
+            await msg.answer(
+                "🔥 Приватный клуб TREZV.\nСмотри демо или вступай 👇",
+                reply_markup=WELCOME_KB)
         return
 
     # ② Abonné mais профиль НЕ заполнен
@@ -67,6 +84,25 @@ async def cmd_start(msg: Message, state: FSMContext):
 
     # ③ Уже в клубе
     await msg.answer("👋 Ты уже в клубе. /help — список команд.")
+
+
+# ═════════════ callbacks accueil ═════════════
+@router.callback_query(F.data == "join_free")
+async def join_free(cb: CallbackQuery):
+    slots = await free_slots_left()
+    if not slots:                                   # quota épuisé à la ms près
+        await cb.answer("Увы, бесплатные места закончились.", show_alert=True)
+        await start(cb.message, FSMContext(cb.message.bot, cb.from_user.id))  # refresh UI
+        return
+
+    await update_user(cb.from_user.id,
+                      is_member=True,
+                      lifetime_access=True,
+                      pseudo="_anon"+str(cb.from_user.id))  # stub anonyme
+    await cb.message.answer(
+        "🎉 Ты вошёл в первые 100! Доступ навсегда.\n"
+        "Заполни профиль → /start")
+    await cb.answer()
 
 # ────────────────────────────────────────────────── PSEUDO
 # ───────────────────── Отмена, если пользователь ввёл /команду ──────────────
@@ -151,13 +187,7 @@ async def complete_registration(telegram_id: int, state: FSMContext, reply_fn):
     await reply_fn("✅ Профиль создан!")
 
     # ——— Boutons DEMO & Payer ———
-    pay_kb = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="💳 -80 % первый месяц", callback_data="pay")],
-            [InlineKeyboardButton(text="👀 Демо",               callback_data="demo")],
-        ]
-    )
-    await reply_fn("🚀 Готов вступить в закрытый клуб?", reply_markup=pay_kb)
+    await reply_fn("🚀 Готов вступить в закрытый клуб?", reply_markup=WELCOME_KB)
     await state.clear()
 
 # ─────────────────────────────── DEMO (aperçu gratuit)
