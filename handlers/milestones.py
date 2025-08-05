@@ -18,37 +18,53 @@ from database.milestone_like import MilestoneLike
 milestone_router = Router()
 
 
-def milestone_kb(msg_id: int, likes: int = 0) -> InlineKeyboardMarkup:
-    """Клавиатура для поста-вехи.
-    :param msg_id: ID сообщения в группе (нужен для callback).
-    :param likes:  Текущее число лайков.
+def milestone_kb(msg_id: int, likes: int) -> InlineKeyboardMarkup:
+    """
+    Clavier sous chaque checkpoint :
+      ├─ ✍️ Ответить
+      └─ ❤️ / compteur de likes
     """
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton("✍️ Ответить", callback_data=f"reply:{msg_id}")],
-            [InlineKeyboardButton(f"👍 {likes}",   callback_data=f"like:{msg_id}")],
+            [InlineKeyboardButton(
+                text="✍️ Ответить",
+                callback_data=f"reply:{msg_id}"
+            )],
+            [InlineKeyboardButton(
+                text=f"❤️ {likes}" if likes else "❤️",
+                callback_data=f"like:{msg_id}"
+            )]
         ]
     )
 
 
 @milestone_router.callback_query(F.data.startswith("like:"))
 async def like_milestone(cb: CallbackQuery):
-    """Добавляет лайк к milestone-сообщению. Уникальное ограничение UX исключает повторный лайк."""
-    msg_id = int(cb.data.split(":")[1])
+    """
+    Ajoute ou retire un like (1 like max par user & par message)
+    """
+    msg_id = int(cb.data.split(":", 1)[1])
 
     async with async_session() as ses:
-        try:
-            # Пытаемся записать лайк. Если уже есть – ловим IntegrityError.
-            ses.add(MilestoneLike(message_id=msg_id, user_id=cb.from_user.id))
-            await ses.commit()
-        except IntegrityError:
-            await cb.answer("Уже лайкнул 🙂", show_alert=True)
-            return
-
-        likes = await ses.scalar(
-            select(func.count()).select_from(MilestoneLike).where(MilestoneLike.message_id == msg_id)
+        already = await ses.scalar(
+            select(PostLike).where(
+                PostLike.message_id == msg_id,
+                PostLike.user_tg_id == cb.from_user.id)
         )
 
-    # Обновляем счётчик на кнопке
-    await cb.message.edit_reply_markup(milestone_kb(msg_id, likes))
+        if already:
+            await ses.delete(already)                # on retire le like
+        else:
+            ses.add(PostLike(message_id=msg_id, user_tg_id=cb.from_user.id))
+
+        likes = await ses.scalar(
+            select(func.count()).select_from(
+                PostLike).where(PostLike.message_id == msg_id)
+        )
+        await ses.commit()
+
+    # MAJ du clavier
+    await cb.message.edit_reply_markup(
+        reply_markup=milestone_kb(msg_id, likes)
+    )
     await cb.answer("👍")
