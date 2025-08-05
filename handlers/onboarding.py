@@ -87,7 +87,7 @@ async def cmd_start(msg: Message, state: FSMContext):
 
 
 # ═════════════ callbacks accueil ═════════════
-@router.callback_query(F.data == "join_free")
+@onboarding_router.callback_query(F.data == "join_free")
 async def join_free(cb: CallbackQuery):
     slots = await free_slots_left()
     if not slots:                                   # quota épuisé à la ms près
