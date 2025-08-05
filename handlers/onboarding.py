@@ -26,7 +26,7 @@ class OnboardingState(StatesGroup):
     choose_date  = State()
     typing_date  = State()
 
-# ═════════ UI constantes ═════════
+# ═════════ UI ═════════
 EMOJI_CHOICES = ["😎", "👤", "🦁", "🐺", "🦅",
                  "🐯", "🔥", "💪", "🥷", "👽"]
 PSEUDO_RE = re.compile(r"^(?!/)\S{1,30}$", re.UNICODE)
@@ -45,12 +45,12 @@ WELCOME_KB = InlineKeyboardMarkup(
     ]
 )
 
-# ═════════════════════════════ /start
+# ═════════════════════ /start
 @onboarding_router.message(F.text == "/start")
 async def cmd_start(msg: Message, state: FSMContext):
     user = await get_user(msg.from_user.id)
 
-    if not user:                                   # pas encore en base
+    if not user:                                   # nouveau
         slots = await free_slots_left()
         if slots:
             kb = InlineKeyboardMarkup(
@@ -73,7 +73,7 @@ async def cmd_start(msg: Message, state: FSMContext):
             reply_markup=WELCOME_KB
         )
 
-    if user.pseudo.startswith("_anon"):            # stub -> compléter
+    if user.pseudo.startswith("_anon"):            # stub → compléter
         await msg.answer("✏️ Введи псевдоним (1–30 символов):")
         return await state.set_state(OnboardingState.pseudo)
 
@@ -104,7 +104,7 @@ async def join_free(cb: CallbackQuery):
         else:
             user.is_member       = True
             user.lifetime_access = True
-            if user.pseudo == "":
+            if not user.pseudo:
                 user.pseudo = f"_anon{telegram_id}"
         await ses.commit()
 
@@ -115,9 +115,7 @@ async def join_free(cb: CallbackQuery):
     await cb.answer()
 
 # ═════════ PSEUDO ═════════
-@onboarding_router.message(
-    StateFilter(OnboardingState.pseudo) & F.text.startswith("/")
-)
+@onboarding_router.message(StateFilter(OnboardingState.pseudo), F.text.startswith("/"))
 async def cancel_pseudo(msg: Message, state: FSMContext):
     await state.clear()
     await msg.answer("Онбординг прерван. Запусти /start заново.")
@@ -139,21 +137,24 @@ async def set_pseudo(message: Message, state: FSMContext):
     await state.set_state(OnboardingState.emoji)
 
 # ═════════ EMOJI ═════════
-@onboarding_router.callback_query(
-    StateFilter(OnboardingState.emoji) & F.data.startswith("avatar:")
-)
+@onboarding_router.callback_query(StateFilter(OnboardingState.emoji), F.data.startswith("avatar:"))
 async def choose_avatar(cb: CallbackQuery, state: FSMContext):
     await state.update_data(avatar_emoji=cb.data.split(":", 1)[1])
     await cb.message.answer("📅 Когда ты бросил траву?", reply_markup=DATE_KB)
     await state.set_state(OnboardingState.choose_date)
 
 # ═════════ DATE ═════════
-@onboarding_router.callback_query(
-    StateFilter(OnboardingState.choose_date) & (F.data == "set_date")
-)
+@onboarding_router.callback_query(StateFilter(OnboardingState.choose_date), F.data == "set_date")
 async def ask_date(cb: CallbackQuery, state: FSMContext):
     await cb.message.answer("Введите дату (ДД.ММ.ГГГГ):")
     await state.set_state(OnboardingState.typing_date)
+
+@onboarding_router.callback_query(StateFilter(OnboardingState.choose_date), F.data == "skip_date")
+async def skip_date(cb: CallbackQuery, state: FSMContext):
+    await state.update_data(quit_date=None)
+    await complete_registration(cb.from_user.id, state, cb.message.answer)
+    await cb.answer()
+    await cb.message.delete()
 
 @onboarding_router.message(StateFilter(OnboardingState.typing_date))
 async def save_date(message: Message, state: FSMContext):
@@ -163,15 +164,6 @@ async def save_date(message: Message, state: FSMContext):
         return await message.answer("❌ Формат неверный. Пример: 14.06.2024")
     await state.update_data(quit_date=q_date)
     await complete_registration(message.from_user.id, state, message.answer)
-
-@onboarding_router.callback_query(
-    StateFilter(OnboardingState.choose_date) & (F.data == "skip_date")
-)
-async def skip_date(cb: CallbackQuery, state: FSMContext):
-    await state.update_data(quit_date=None)
-    await complete_registration(cb.from_user.id, state, cb.message.answer)
-    await cb.answer()
-    await cb.message.delete()
 
 # ═════════ Fin inscription ═════════
 async def complete_registration(telegram_id: int, state: FSMContext, reply_fn):
