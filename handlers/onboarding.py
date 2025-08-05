@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 # handlers/onboarding.py
 from aiogram import Router, F
 from aiogram.filters import StateFilter
@@ -10,8 +12,6 @@ from aiogram.fsm.context import FSMContext
 from sqlalchemy import select
 from datetime import datetime
 import re
-
-from __future__ import annotations
 
 from database.database import async_session
 from database.user import User
