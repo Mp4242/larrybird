@@ -1,11 +1,11 @@
+from __future__ import annotations
+
 from sqlalchemy import Column, Integer, String, Date, DateTime
 from sqlalchemy.sql import func
 from database.database import Base            # ✅ importe Base directement ici
 from sqlalchemy import Boolean
 from sqlalchemy.orm import Mapped, mapped_column
 from datetime import date
-from __future__ import annotations
-
 
 class User(Base):
     """Таблица участников клуба."""
