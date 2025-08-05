@@ -33,7 +33,13 @@ async def get_user(telegram_id: int) -> User | None:
         res = await ses.execute(stmt)
         return res.scalar_one_or_none()
 
-
+async def free_slots_left() -> int:
+    async with async_session() as ses:
+        used = await ses.scalar(
+            select(func.count()).select_from(User).where(User.lifetime_access == True)
+        )
+    return max(0, 100 - (used or 0))
+    
 async def create_user(telegram_id: int, pseudo: str, emoji: str = "👤") -> User:
     async with get_session() as ses:
         user = User(telegram_id=telegram_id, pseudo=pseudo, avatar_emoji=emoji)

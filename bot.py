@@ -106,7 +106,10 @@ async def handle_webhook(request: web.Request):
         if user:
             await update_user(uid, is_member=True, paid_until=until)
         else:
-            await create_user_stub(uid, is_member=True, paid_until=until)
+            await create_user_stub(uid)
+            # Quoi qu’il arrive, on confirme l’abonnement
+            until = (datetime.utcnow() + timedelta(days=31)).date()
+            await update_user(uid, is_member=True, paid_until=until)
 
         # ▸ 2. inviter dans le groupe privé
         try:

@@ -27,3 +27,4 @@ class User(Base):
     last_checkpoint: Mapped[int]  = mapped_column(Integer, default=0, nullable=False)
     is_sober:      Mapped[bool]   = mapped_column(Boolean, default=True, nullable=False)
     paid_until                    = mapped_column(DateTime, nullable=True)   # optionnel
+    lifetime_access               = mapped_column(Boolean, default=False, nullable=False)
