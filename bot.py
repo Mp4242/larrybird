@@ -94,7 +94,6 @@ async def motivation_notifs():
 
 # ──────────────────────────── Webhook Tribute
 async def handle_webhook(request: web.Request):
-async def handle_webhook(request):
     data = await request.json()
     logging.warning("WEBHOOK DATA %s", data)
 
