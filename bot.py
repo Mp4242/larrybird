@@ -16,7 +16,6 @@ from config import TOKEN, MILESTONES, SUPER_GROUP, TOPICS
 from database.database import async_session
 from database.user import User
 from database.utils import get_user, create_user_stub, update_user
-from database.milestone_like import MilestoneLike
 
 from handlers import (
     onboarding_router, main_router, counter_router, replies_router,
