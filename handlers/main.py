@@ -5,11 +5,10 @@ from aiogram import Router, F
 from aiogram.filters import StateFilter
 from aiogram.types import (
     Message, CallbackQuery,
-    InlineKeyboardMarkup, InlineKeyboardButton
+    InlineKeyboardMarkup, InlineKeyboardButton,
 )
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
-
 from sqlalchemy import select, func
 from datetime import date
 
@@ -21,22 +20,21 @@ from database.post_like import PostLike
 
 main_router = Router()
 
-# ═══════════════════════════  FSM  ═══════════════════════════
+# ═════════════════════════  FSM  ═════════════════════════
 class SosState(StatesGroup):
     waiting_for_text = State()
 class WinState(StatesGroup):
     waiting_for_text = State()
 
-# ═════════════  UI helper (1 seule fonction)  ══════════════
+# ═════════════  Génération clavier  ═════════════
 def post_inline_keyboard(
     *,
     message_id: int,
-    with_reply: bool   = True,
-    with_like: bool    = True,
+    with_reply:   bool = True,
+    with_like:    bool = True,
     with_support: bool = False,
-    likes: int = 0
+    likes: int = 0,
 ) -> InlineKeyboardMarkup:
-
     rows: list[list[InlineKeyboardButton]] = []
 
     if with_reply:
@@ -54,27 +52,31 @@ def post_inline_keyboard(
 
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
-# ═════════════  Outils divers  ══════════════
-def format_sobriety_duration(start_date: date | None) -> str:
-    if not start_date:
+# ═════════════  Helpers  ═════════════
+def format_sobriety_duration(start: date | None) -> str:
+    if not start:
         return "ещё не начал"
-    delta = date.today() - start_date
-    y, r = divmod(delta.days, 365)
+    days = (date.today() - start).days
+    y, r = divmod(days, 365)
     m, d = divmod(r, 30)
-    parts = [f"{y} г." if y else "", f"{m} мес." if m else "", f"{d} дн." if d else ""]
-    return " ".join(p for p in parts if p)
+    return " ".join(p for p in (
+        f"{y} г." if y else "",
+        f"{m} мес." if m else "",
+        f"{d} дн." if d else "",
+    ) if p)
 
-async def ensure_profile_complete(user: User | None, reply_fn):
+async def ensure_profile_complete(user: User | None, reply_fn) -> bool:
     if not user or not user.pseudo or not user.avatar_emoji:
         await reply_fn("⚠️ Профиль не завершён. Напиши /start.")
         return False
     return True
 
-# ═════════════  /win – /sos  ══════════════
+# ═════════════  /win et /sos  ═════════════
 @main_router.message(F.text == "/win")
 async def cmd_win(msg: Message, state: FSMContext):
     async with async_session() as ses:
-        user = await ses.scalar(select(User).where(User.telegram_id == msg.from_user.id))
+        user = await ses.scalar(select(User)
+                                .where(User.telegram_id == msg.from_user.id))
         if not await ensure_profile_complete(user, msg.answer):
             return
     await msg.answer("🎉 Расскажи о своей победе (до 500 символов):")
@@ -83,51 +85,52 @@ async def cmd_win(msg: Message, state: FSMContext):
 @main_router.message(F.text == "/sos")
 async def cmd_sos(msg: Message, state: FSMContext):
     async with async_session() as ses:
-        user = await ses.scalar(select(User).where(User.telegram_id == msg.from_user.id))
+        user = await ses.scalar(select(User)
+                                .where(User.telegram_id == msg.from_user.id))
         if not await ensure_profile_complete(user, msg.answer):
             return
-    await msg.answer("🆘 Что случилось? Опиши свою ситуацию (до 500 символов):")
+    await msg.answer("🆘 Что случилось? Опиши ситуацию (до 500 символов):")
     await state.set_state(SosState.waiting_for_text)
 
-# Annulation si l’utilisateur tape une /commande en plein saisie
+# — Annulation si /commande pendant la saisie —
 @main_router.message(StateFilter(SosState.waiting_for_text), F.text.startswith("/"))
-@main_router.message(StateFilter(WinState.waiting_for_text), F.text.startswith("/"))
-async def cancel_post(msg: Message, state: FSMContext):
+async def cancel_sos(msg: Message, state: FSMContext):
     await state.clear()
 
-# ═════════════  Publication SOS  ══════════════
+@main_router.message(StateFilter(WinState.waiting_for_text), F.text.startswith("/"))
+async def cancel_win(msg: Message, state: FSMContext):
+    await state.clear()
+
+# ═════════════  Publication SOS  ═════════════
 @main_router.message(StateFilter(SosState.waiting_for_text))
-async def handle_sos_text(msg: Message, state: FSMContext):
+async def handle_sos(msg: Message, state: FSMContext):
     if not msg.text:
         return
     text = msg.text.strip()[:500]
 
     async with async_session() as ses:
-        user: User = await ses.scalar(select(User).where(User.telegram_id == msg.from_user.id))
+        user: User = await ses.scalar(select(User)
+                                      .where(User.telegram_id == msg.from_user.id))
         if not await ensure_profile_complete(user, msg.answer):
             return
 
         sobriety = format_sobriety_duration(user.quit_date)
-        full_text = (
+        body = (
             f"{text}\n\n"
-            f"—\n{user.avatar_emoji} {user.pseudo}  | {sobriety}  | 0 ответов"
+            f"—\n{user.avatar_emoji} {user.pseudo} | {sobriety} | 0 ответов"
         )
 
+        # on envoie sans clavier puis on le rajoute
+        # ───── SOS ─────────────────────────────────────────
         sent = await msg.bot.send_message(
-            SUPER_GROUP,
-            message_thread_id=TOPICS["sos"],
-            text=full_text
+            SUPER_GROUP, message_thread_id=TOPICS["sos"], text=body
         )
-
-        await msg.bot.edit_message_reply_markup(
-            SUPER_GROUP, sent.message_id,
-            reply_markup=post_inline_keyboard(message_id=sent.message_id,
-                                              with_reply=True,
-                                              with_like=True,
-                                              with_support=True,
-                                              likes=0)
+        await sent.edit_reply_markup(                # ⬅️ AVANT
+            reply_markup=post_inline_keyboard(       # ⬅️ APRÈS — on nomme l’arg
+                message_id=sent.message_id,
+                with_reply=True, with_like=True, with_support=True, likes=0
+            )
         )
-
         ses.add(Post(id=sent.message_id, author_id=user.id,
                      thread_id=TOPICS["sos"], text=text))
         await ses.commit()
@@ -135,36 +138,34 @@ async def handle_sos_text(msg: Message, state: FSMContext):
     await msg.answer("✅ Сообщение опубликовано анонимно.")
     await state.clear()
 
-# ═════════════  Publication WIN  ══════════════
+# ═════════════  Publication WIN  ═════════════
 @main_router.message(StateFilter(WinState.waiting_for_text))
-async def handle_win_text(msg: Message, state: FSMContext):
+async def handle_win(msg: Message, state: FSMContext):
     if not msg.text:
         return
     text = msg.text.strip()[:500]
 
     async with async_session() as ses:
-        user: User = await ses.scalar(select(User).where(User.telegram_id == msg.from_user.id))
+        user: User = await ses.scalar(select(User)
+                                      .where(User.telegram_id == msg.from_user.id))
         if not await ensure_profile_complete(user, msg.answer):
             return
 
         sobriety = format_sobriety_duration(user.quit_date)
-        full_text = (
+        body = (
             f"{text}\n\n"
-            f"—\n{user.avatar_emoji} {user.pseudo}  | {sobriety}  | 0 ответов"
+            f"—\n{user.avatar_emoji} {user.pseudo} | {sobriety} | 0 ответов"
         )
 
+        # ───── WIN ─────────────────────────────────────────
         sent = await msg.bot.send_message(
-            SUPER_GROUP,
-            message_thread_id=TOPICS["wins"],
-            text=full_text
+            SUPER_GROUP, message_thread_id=TOPICS["wins"], text=body
         )
-        await msg.bot.edit_message_reply_markup(
-            SUPER_GROUP, sent.message_id,
-            reply_markup=post_inline_keyboard(message_id=sent.message_id,
-                                              with_reply=True,
-                                              with_like=True,
-                                              with_support=False,
-                                              likes=0)
+        await sent.edit_reply_markup(                # ⬅️ même correction
+            reply_markup=post_inline_keyboard(
+                message_id=sent.message_id,
+                with_reply=True, with_like=True, with_support=False, likes=0
+            )
         )
 
         ses.add(Post(id=sent.message_id, author_id=user.id,
@@ -174,34 +175,17 @@ async def handle_win_text(msg: Message, state: FSMContext):
     await msg.answer("✅ Победа опубликована!")
     await state.clear()
 
-# ═════════════  Publication ANNOUNCES  (exemple) ══════════════
-# Utilise with_reply=False & with_support=False
-async def publish_announce(bot, text: str):
-    sent = await bot.send_message(
-        SUPER_GROUP,
-        message_thread_id=TOPICS["announces"],
-        text=text
-    )
-    await bot.edit_message_reply_markup(
-        SUPER_GROUP, sent.message_id,
-        reply_markup=post_inline_keyboard(message_id=sent.message_id,
-                                          with_reply=False,
-                                          with_like=True,
-                                          with_support=False,
-                                          likes=0)
-    )
-
-# ═════════════  Like ❤️  ══════════════
+# ═════════════  Like ❤️  ═════════════
 @main_router.callback_query(F.data.startswith("like:"))
 async def like_post(cb: CallbackQuery):
     post_id = int(cb.data.split(":", 1)[1])
 
     async with async_session() as ses:
         # déjà liké ?
-        already = await ses.scalar(select(PostLike)
-                                   .where(PostLike.post_id == post_id,
-                                          PostLike.user_id == cb.from_user.id))
-        if already:
+        exists = await ses.scalar(select(PostLike)
+                                  .where(PostLike.post_id == post_id,
+                                         PostLike.user_id == cb.from_user.id))
+        if exists:
             return await cb.answer("Уже лайкнул 😉", show_alert=True)
 
         ses.add(PostLike(post_id=post_id, user_id=cb.from_user.id))
@@ -212,21 +196,26 @@ async def like_post(cb: CallbackQuery):
                   .where(PostLike.post_id == post_id)
         )
 
-    # type de thread -> quels boutons afficher
-    thread_id = cb.message.message_thread_id
-    with_support = thread_id == TOPICS["sos"]
-    with_reply   = with_support or thread_id == TOPICS["wins"]
+    # boutons selon le topic
+    thread = cb.message.message_thread_id
+    with_support = thread == TOPICS["sos"]
+    with_reply   = with_support or thread == TOPICS["wins"]
 
-    await cb.message.edit_reply_markup(
-        post_inline_keyboard(message_id=post_id,
-                             with_reply=with_reply,
-                             with_like=True,
-                             with_support=with_support,
-                             likes=likes)
-    )
+    try:
+        await cb.message.edit_reply_markup(
+            reply_markup=post_inline_keyboard(
+                message_id=post_id,
+                with_reply=with_reply,
+                with_like=True,
+                with_support=with_support,
+                likes=likes
+            )
+        )
+    except Exception:                # BadRequest : « message is not modified »
+        pass
     await cb.answer("❤️")
 
-# ═════════════  Bouton « 🤝 Поддержать »  ══════════════
+# ═════════════  Bouton « 🤝 Поддержать »  ═════════════
 @main_router.callback_query(F.data.startswith("support:"))
 async def handle_support(cb: CallbackQuery):
     if cb.from_user.id not in MENTORS:

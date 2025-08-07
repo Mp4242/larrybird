@@ -176,13 +176,14 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.base import StorageKey
 from aiogram.filters import StateFilter
 from aiogram.exceptions import TelegramForbiddenError
-from sqlalchemy import select
+from sqlalchemy import select, func            
 import logging
 
-from config import SUPER_GROUP, BOT_USERNAME
+from config import SUPER_GROUP, BOT_USERNAME, TOPICS
 from database.database import async_session
 from database.user import User
 from database.post import Post
+from database.post_like import PostLike
 from handlers.main import format_sobriety_duration, post_inline_keyboard
 
 replies_router = Router()
@@ -310,24 +311,33 @@ async def save_reply(msg: Message, state: FSMContext):
         # 2) Mettre à jour le post original
         post.reply_count += 1
         author = await ses.get(User, post.author_id)
-        # Choix de la mention "réponse(s)"
-        if post.reply_count == 0:
-            replies_label = "0 ответов"
-        elif post.reply_count == 1:
-            replies_label = "✅ 1 ответ"
-        else:
-            replies_label = f"✅ {post.reply_count} ответа"
+        
+        # libellé « N ответов »
+        n = post.reply_count
+        replies_label = f"✅ {n} ответ" if n == 1 else f"✅ {n} ответа" if 2 <= n <= 4 else f"✅ {n} ответов"
 
         updated = (
             f"{post.text}\n\n"
             f"—\n{author.avatar_emoji} {author.pseudo}  | "
             f"{format_sobriety_duration(author.quit_date)}  | {replies_label}"
         )
+
+        # infos pour les boutons
+        likes        = await ses.scalar(select(func.count()).select_from(PostLike).where(PostLike.post_id == original_id))
+        with_support = post.thread_id == TOPICS["sos"]
+        with_reply   = True      # toujours vrai pour un post-racine
+        
         await msg.bot.edit_message_text(
-            chat_id=SUPER_GROUP,
-            message_id=original_id,
-            text=updated,
-            reply_markup=post_inline_keyboard(author.id, original_id)
+            chat_id    = SUPER_GROUP,
+            message_id = original_id,
+            text       = updated,
+            reply_markup = post_inline_keyboard(          # ❹ nouvel appel
+                message_id   = original_id,
+                with_reply   = with_reply,
+                with_like    = True,
+                with_support = with_support,
+                likes        = likes
+            )
         )
 
         # 3) Persister la réponse
