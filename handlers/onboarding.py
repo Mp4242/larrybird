@@ -1,12 +1,8 @@
 from __future__ import annotations
 
-# handlers/onboarding.py
 from aiogram import Router, F
 from aiogram.filters import StateFilter
-from aiogram.types import (
-    Message, CallbackQuery,
-    InlineKeyboardMarkup, InlineKeyboardButton
-)
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
 from sqlalchemy import select
@@ -15,7 +11,7 @@ import re
 
 from database.database import async_session
 from database.user import User
-from database.utils import get_user, free_slots_left
+from database.utils import get_user, free90_slots_left, claim_free90
 
 onboarding_router = Router()
 
@@ -45,73 +41,65 @@ WELCOME_KB = InlineKeyboardMarkup(
     ]
 )
 
+def free90_kb(slots: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(
+                text=f"🎁 90 дней бесплатно · осталось {slots}",
+                callback_data="join_free90")],
+            [InlineKeyboardButton(text="👀 Посмотреть демо", callback_data="demo")]
+        ]
+    )
+
 # ═════════════════════ /start
 @onboarding_router.message(F.text == "/start")
 async def cmd_start(msg: Message, state: FSMContext):
     user = await get_user(msg.from_user.id)
 
-    if not user:                                   # nouveau
-        slots = await free_slots_left()
+    # ① Pas en DB → proposer free90 si dispo sinon pay
+    if not user:
+        slots = await free90_slots_left()
         if slots:
-            kb = InlineKeyboardMarkup(
-                inline_keyboard=[
-                    [InlineKeyboardButton(
-                        text=f"🎁 Войти бесплатно · осталось {slots}",
-                        callback_data="join_free")],
-                    [InlineKeyboardButton(
-                        text="👀 Посмотреть демо", callback_data="demo")]
-                ]
-            )
             return await msg.answer(
                 "🔥 Приватный клуб TREZV\n"
-                "Первые 100 получают доступ навсегда.\n"
+                "Первые 100 получают доступ на 90 дней бесплатно.\n"
                 f"Осталось <b>{slots}</b> мест 👇",
-                reply_markup=kb, parse_mode="HTML"
+                reply_markup=free90_kb(slots), parse_mode="HTML"
             )
         return await msg.answer(
             "🔥 Приватный клуб TREZV.\nСмотри демо или вступай 👇",
             reply_markup=WELCOME_KB
         )
 
-    if user.pseudo.startswith("_anon"):            # stub → compléter
+    # ② Profil incomplet → pseudo/emoji/date
+    if (not user.pseudo) or user.pseudo.startswith("_anon") or (not user.avatar_emoji):
         await msg.answer("✏️ Введи псевдоним (1–30 символов):")
         return await state.set_state(OnboardingState.pseudo)
 
+    # ③ Profil OK mais pas membre actif → proposer free90 (si pas encore pris) ou pay
+    if not user.is_active_member():
+        if not user.free90_claimed:
+            slots = await free90_slots_left()
+            if slots:
+                return await msg.answer(
+                    "🔥 Возьми 90 дней бесплатно, пока есть места:",
+                    reply_markup=free90_kb(slots)
+                )
+        return await msg.answer("🚀 Готов вступить в закрытый клуб?", reply_markup=WELCOME_KB)
+
+    # ④ Déjà membre actif
     await msg.answer("👋 Ты уже в клубе. /help — список команд.")
 
-# ═════════ join_free ═════════
-@onboarding_router.callback_query(F.data == "join_free")
-async def join_free(cb: CallbackQuery):
-    telegram_id = cb.from_user.id
-    slots = await free_slots_left()
-    if not slots:
+# ═════════ 90 jours gratuits ═════════
+@onboarding_router.callback_query(F.data == "join_free90")
+async def join_free90(cb: CallbackQuery):
+    ok = await claim_free90(cb.from_user.id)
+    if not ok:
         await cb.answer("Увы, бесплатные места закончились.", show_alert=True)
-        await cmd_start(cb.message, FSMContext(cb.message.bot, telegram_id))
+        await cb.message.edit_reply_markup(reply_markup=WELCOME_KB)
         return
 
-    async with async_session() as ses:
-        user: User | None = await ses.scalar(
-            select(User).where(User.telegram_id == telegram_id)
-        )
-        if user is None:
-            ses.add(User(
-                telegram_id     = telegram_id,
-                pseudo          = f"_anon{telegram_id}",
-                avatar_emoji    = "👤",
-                is_member       = True,
-                lifetime_access = True
-            ))
-        else:
-            user.is_member       = True
-            user.lifetime_access = True
-            if not user.pseudo:
-                user.pseudo = f"_anon{telegram_id}"
-        await ses.commit()
-
-    await cb.message.answer(
-        "🎉 Ты вошёл в первые 100! Доступ навсегда.\n"
-        "Заполни профиль → /start"
-    )
+    await cb.message.answer("🎉 Активировано 90 дней бесплатно! Заверши профиль → /start")
     await cb.answer()
 
 # ═════════ PSEUDO ═════════
@@ -122,17 +110,15 @@ async def cancel_pseudo(msg: Message, state: FSMContext):
 
 @onboarding_router.message(StateFilter(OnboardingState.pseudo))
 async def set_pseudo(message: Message, state: FSMContext):
-    raw = message.text.strip()
+    raw = (message.text or "").strip()
     if not PSEUDO_RE.match(raw):
         return await message.answer("❌ 1–30 символов, без пробелов. Попробуй ещё:")
     await state.update_data(pseudo=raw)
 
-    kb = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text=e, callback_data=f"avatar:{e}")]
-            for e in EMOJI_CHOICES
-        ]
-    )
+    rows = [[InlineKeyboardButton(text=e, callback_data=f"avatar:{e}") for e in EMOJI_CHOICES[i:i+5]]
+            for i in range(0, len(EMOJI_CHOICES), 5)]
+    kb = InlineKeyboardMarkup(inline_keyboard=rows)
+
     await message.answer("🙂 Выбери эмодзи-аватар:", reply_markup=kb)
     await state.set_state(OnboardingState.emoji)
 
@@ -172,9 +158,7 @@ async def complete_registration(telegram_id: int, state: FSMContext, reply_fn):
         return await reply_fn("⚠️ Онбординг не завершён. /start")
 
     async with async_session() as ses:
-        user: User | None = await ses.scalar(
-            select(User).where(User.telegram_id == telegram_id)
-        )
+        user: User | None = await ses.scalar(select(User).where(User.telegram_id == telegram_id))
         if user is None:
             user = User(telegram_id=telegram_id)
             ses.add(user)
@@ -182,19 +166,14 @@ async def complete_registration(telegram_id: int, state: FSMContext, reply_fn):
         user.pseudo       = data["pseudo"]
         user.avatar_emoji = data["avatar_emoji"]
         user.quit_date    = data.get("quit_date")
-        user.is_member    = user.is_member or user.lifetime_access
         await ses.commit()
 
     await reply_fn("✅ Профиль создан!")
-    async with async_session() as ses:
-        user: User = await ses.scalar(
-            select(User).where(User.telegram_id == telegram_id)
-        )
-        if user.lifetime_access:
-            await reply_fn("🚀 Добро пожаловать в закрытый клуб!")
-        else:
-            await reply_fn("🚀 Готов вступить в закрытый клуб?",
-                           reply_markup=WELCOME_KB)
+
+    u = await get_user(telegram_id)
+    if not (u and u.is_active_member()):
+        await reply_fn("🚀 Готов вступить в закрытый клуб?", reply_markup=WELCOME_KB)
+
     await state.clear()
 
 # ═════════ DEMO ═════════

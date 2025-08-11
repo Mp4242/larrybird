@@ -11,9 +11,12 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import BotCommand, BotCommandScopeDefault
 from aiohttp import web
 import aiocron
-from sqlalchemy import select, func
+from sqlalchemy import select
 
-from config import TOKEN, MILESTONES, SUPER_GROUP, TOPICS
+from config import (
+    TOKEN, MILESTONES, SUPER_GROUP, TOPICS,
+    GRACE_DAYS, TRIBUTE_URL_TEMPLATE
+)
 from database.database import async_session
 from database.user import User
 from database.utils import get_user, create_user_stub, update_user
@@ -23,8 +26,8 @@ from handlers import (
     replies_router, posts_router, settings_router
 )
 from handlers.pay import pay_router
-from handlers.help import help_router 
-from handlers.main import post_inline_keyboard   # ← nouveau import
+from handlers.help import help_router
+from handlers.main import post_inline_keyboard   # pour le clavier sous les posts
 
 # ───────────────────────────  Bot / Dispatcher
 logging.basicConfig(level=logging.INFO)
@@ -46,7 +49,7 @@ DEFAULT_COMMANDS = [
     BotCommand(command="posts",    description="🗑 Мои сообщения"),
     BotCommand(command="settings", description="⚙️ Настройки"),
 ]
-async def set_bot_commands(b: Bot):  # pragma: no cover
+async def set_bot_commands(b: Bot):
     await b.set_my_commands(DEFAULT_COMMANDS, BotCommandScopeDefault())
 
 # ───────────────────────────  Citations motivantes
@@ -56,7 +59,7 @@ QUOTES = [
     "Продолжай, ты на правильном пути! 🌟",
 ]
 
-# ───────────────────────────  Cron : checkpoints
+# ───────────────────────────  Cron : checkpoints sobriété (wins auto)
 @aiocron.crontab("30 0 * * *")
 async def sobriety_check():
     async with async_session() as ses:
@@ -71,30 +74,36 @@ async def sobriety_check():
 
             if next_ms and days >= next_ms:
                 # DM perso
-                await bot.send_message(u.telegram_id,
-                                       f"🎉 Поздравляю! Сегодня {next_ms} дней без травы.")
+                try:
+                    await bot.send_message(
+                        u.telegram_id,
+                        f"🎉 Поздравляю! Сегодня {next_ms} дней без травы."
+                    )
+                except Exception as e:
+                    logging.warning("DM checkpoint failed %s: %s", u.telegram_id, e)
 
                 # Post automatique dans WINS
-                sent = await bot.send_message(
-                    SUPER_GROUP,
-                    message_thread_id=TOPICS["wins"],
-                    text=f"🥳 {u.avatar_emoji} <b>{u.pseudo}</b> празднует "
-                         f"<b>{next_ms} дн.</b>",
-                    parse_mode="HTML",
-                )
-                # Ajout du clavier (répondre + like)
-                await bot.edit_message_reply_markup(
-                    SUPER_GROUP, sent.message_id,
-                    reply_markup=post_inline_keyboard(
-                        message_id=sent.message_id,
-                        with_reply=True, with_like=True, with_support=False, likes=0
+                try:
+                    sent = await bot.send_message(
+                        SUPER_GROUP,
+                        message_thread_id=TOPICS["wins"],
+                        text=f"🥳 {u.avatar_emoji} <b>{u.pseudo}</b> празднует <b>{next_ms} дн.</b>",
                     )
-                )
+                    await bot.edit_message_reply_markup(
+                        SUPER_GROUP, sent.message_id,
+                        reply_markup=post_inline_keyboard(
+                            message_id=sent.message_id,
+                            with_reply=True, with_like=True, with_support=False, likes=0
+                        )
+                    )
+                except Exception as e:
+                    logging.warning("Posting checkpoint failed for %s: %s", u.telegram_id, e)
+
                 u.last_checkpoint = next_ms
 
         await ses.commit()
 
-# ───────────────────────────  Cron : citations quotidiennes
+# ───────────────────────────  Cron : citations quotidiennes (9:00 UTC)
 @aiocron.crontab("0 9 * * *")
 async def motivation_notifs():
     async with async_session() as ses:
@@ -103,8 +112,47 @@ async def motivation_notifs():
         )).scalars().all()
 
         for u in users:
-            if u.quit_date and (date.today() - u.quit_date).days % u.notification_period == 0:
+            try:
                 await bot.send_message(u.telegram_id, random.choice(QUOTES))
+            except Exception as e:
+                logging.debug("Motivation DM fail %s: %s", u.telegram_id, e)
+
+# ───────────────────────────  Cron : expiration abonnements / essais (01:05 UTC)
+@aiocron.crontab("5 1 * * *")
+async def expire_memberships():
+    now = datetime.utcnow()
+    cutoff = now - timedelta(days=GRACE_DAYS)
+
+    async with async_session() as ses:
+        expired = (await ses.execute(
+            select(User).where(
+                User.is_member == True,
+                User.paid_until.is_not(None),
+                User.paid_until < cutoff
+            )
+        )).scalars().all()
+
+        for u in expired:
+            u.is_member = False
+            # On enlève du groupe (ban+unban pour autoriser un retour via lien)
+            try:
+                await bot.ban_chat_member(SUPER_GROUP, u.telegram_id)
+                await bot.unban_chat_member(SUPER_GROUP, u.telegram_id)
+            except Exception as e:
+                logging.warning("Remove from group failed %s: %s", u.telegram_id, e)
+
+            # DM de renouvellement
+            try:
+                await bot.send_message(
+                    u.telegram_id,
+                    "⏳ Срок доступа истёк.\n"
+                    "Чтобы вернуться в закрытый клуб, продли подписку:\n"
+                    f"{TRIBUTE_URL_TEMPLATE}"
+                )
+            except Exception as e:
+                logging.debug("DM renewal fail %s: %s", u.telegram_id, e)
+
+        await ses.commit()
 
 # ───────────────────────────  Webhook Tribute
 async def handle_webhook(request: web.Request):
@@ -114,7 +162,7 @@ async def handle_webhook(request: web.Request):
     if data.get("name") == "new_subscription":
         uid = int(data["payload"]["telegram_user_id"])
 
-        # 1. marquer membre
+        # 1) marquer membre 31 jours
         until = datetime.utcnow() + timedelta(days=31)
         user  = await get_user(uid)
         if user:
@@ -123,14 +171,15 @@ async def handle_webhook(request: web.Request):
             await create_user_stub(uid)
             await update_user(uid, is_member=True, paid_until=until)
 
-        # 2. tenter d’inviter
+        # 2) donner un lien d’invitation one-shot
         try:
-            # Crée un lien d’invitation unique et l’envoie au membre
             invite = await bot.create_chat_invite_link(SUPER_GROUP, member_limit=1)
-            await bot.send_message(uid, f"🎉 Оплата принята!\n"
-                                        f"➡️ Вступай: {invite.invite_link}")
-        except Exception:
-            pass
+            await bot.send_message(
+                uid,
+                f"🎉 Оплата принята!\n➡️ Вступай: {invite.invite_link}"
+            )
+        except Exception as e:
+            logging.warning("Invite link fail for %s: %s", uid, e)
 
     return web.Response(text="ok")
 
@@ -145,117 +194,6 @@ async def start_webhook():
     await site.start()
 
 # ───────────────────────────  Main
-async def main():
-    asyncio.create_task(start_webhook())
-    await set_bot_commands(bot)
-    await dp.start_polling(bot)
-
-if __name__ == "__main__":
-    asyncio.run(main())
-
-
-
-
-
-# ──────────────────────────── Commands (kwargs)
-DEFAULT_COMMANDS = [
-    BotCommand(command="start",    description="🚀 Главное меню"),
-    BotCommand(command="sos",      description="🆘 Написать SOS"),
-    BotCommand(command="win",      description="🏆 Поделиться WIN"),
-    BotCommand(command="counter",  description="📊 Мой счётчик"),
-    BotCommand(command="posts",    description="🗑 Мои сообщения"),
-    BotCommand(command="settings", description="⚙️ Настройки"),
-]
-
-async def set_bot_commands(bot_: Bot):
-    await bot_.set_my_commands(DEFAULT_COMMANDS, BotCommandScopeDefault())
-
-# ──────────────────────────── Quotes
-QUOTES = [
-    "Ты сильнее, чем думаешь! 💪",
-    "Каждый день без травы - победа! 🏆",
-    "Продолжай, ты на правильном пути! 🌟",
-]
-
-# ──────────────────────────── Sobriety checkpoints (cron)
-@aiocron.crontab("30 0 * * *")
-async def sobriety_check():
-    async with async_session() as ses:
-        users = (await ses.execute(select(User))).scalars().all()
-        for u in users:
-            if not u.quit_date:
-                continue
-            days = (date.today() - u.quit_date).days
-            next_ms = next((m for m in MILESTONES if m > u.last_checkpoint), None)
-            if next_ms and days >= next_ms:
-                await bot.send_message(u.telegram_id, f"🎉 Поздравляю! Сегодня {next_ms} дней без травы.")
-                sent = await bot.send_message(
-                    SUPER_GROUP,
-                    TOPICS["wins"],
-                    f"🥳 {u.avatar_emoji} <b>{u.pseudo}</b> празднует <b>{next_ms} д.</b>",
-                    parse_mode="HTML",
-                    reply_markup=milestone_kb(0),
-                )
-                await sent.edit_reply_markup(milestone_kb(sent.message_id))
-                u.last_checkpoint = next_ms
-        await ses.commit()
-
-# ──────────────────────────── Motivation quotes (cron)
-@aiocron.crontab("0 9 * * *")
-async def motivation_notifs():
-    async with async_session() as ses:
-        users = (
-            await ses.execute(select(User).where(User.notifications_enabled == True))
-        ).scalars().all()
-        for u in users:
-            if u.quit_date and (date.today() - u.quit_date).days % u.notification_period == 0:
-                await bot.send_message(u.telegram_id, random.choice(QUOTES))
-
-# ──────────────────────────── Webhook Tribute
-async def handle_webhook(request: web.Request):
-    data = await request.json()
-    logging.warning("WEBHOOK DATA %s", data)
-
-    if data.get("name") == "new_subscription":          # Tribute v2
-        uid = int(data["payload"]["telegram_user_id"])
-
-        # ▸ 1. marquer « membre » (paid_until = +31 jours pour l’exemple)
-        until = datetime.utcnow() + timedelta(days=31)
-        user = await get_user(uid)
-        if user:
-            await update_user(uid, is_member=True, paid_until=until)
-        else:
-            await create_user_stub(uid)
-            # Quoi qu’il arrive, on confirme l’abonnement
-            until = (datetime.utcnow() + timedelta(days=31)).date()
-            await update_user(uid, is_member=True, paid_until=until)
-
-        # ▸ 2. inviter dans le groupe privé
-        try:
-            await bot.invite_chat_member(SUPER_GROUP, uid)
-        except Exception:
-            pass                                         # déjà invité ?
-
-        # ▸ 3. DM de confirmation
-        await bot.send_message(
-            uid,
-            "🎉 Платёж прошёл! Теперь создай профиль → /start"
-            "\n(Если уже создавал — просто используй команды)"
-        )
-
-    return web.Response(text="ok")
-
-# ──────────────────────────── aiohttp app
-app = web.Application()
-app.add_routes([web.post("/webhook", handle_webhook)])
-
-async def start_webhook():
-    runner = web.AppRunner(app)
-    await runner.setup()
-    site = web.TCPSite(runner, "0.0.0.0", 8080)
-    await site.start()
-
-# ──────────────────────────── Main
 async def main():
     asyncio.create_task(start_webhook())
     await set_bot_commands(bot)
