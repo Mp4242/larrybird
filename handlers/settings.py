@@ -22,7 +22,7 @@ from database.utils import get_user, update_user
 
 # ──────────────────────── Init ────────────────────────
 settings_router = Router()
-PSEUDO_RE = re.compile(r"^(?!/)\S{1,30}$", re.UNICODE)   # 1-30 символов, без пробелов
+PSEUDO_RE = re.compile(r"^(?!/)\S{1,10}$", re.UNICODE)   # 1-10 символов, без пробелов
 
 class SettingsState(StatesGroup):
     pseudo    = State()
@@ -30,6 +30,13 @@ class SettingsState(StatesGroup):
     quit_date = State()
 
 EMOJIS = ["👤", "😎", "🐶", "🐱", "🦁", "🐺", "🐵", "🐼"]
+def _fmt_date(dt):
+    if not dt:
+        return "—"
+    # dd.mm.yyyy en UTC
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc).strftime("%d.%m.%Y")
 
 # ───────────────────────── /settings ─────────────────────────
 @settings_router.message(Command("settings"))
@@ -40,28 +47,47 @@ async def settings_handler(message: Message):
 
     notif_enabled = getattr(user, "notifications_enabled", True)
 
-    text = (
-        "⚙️ <b>Текущие настройки</b>\n"
-        f"• Псевдоним: <code>{user.pseudo}</code>\n"
-        f"• Эмодзи: {user.avatar_emoji}\n"
-        f"• Дата отказа: {user.quit_date or '—'}\n"
-        f"• Уведомления: {'Вкл' if notif_enabled else 'Выкл'}"
-    )
+    # base
+    lines = [
+        "⚙️ <b>Текущие настройки</b>",
+        f"• Псевдоним: <code>{user.pseudo}</code>",
+        f"• Эмодзи: {user.avatar_emoji}",
+        f"• Дата отказа: {user.quit_date or '—'}",
+        f"• Уведомления: {'Вкл' if notif_enabled else 'Выкл'}",
+    ]
 
-    kb = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="✏️ Псевдоним",      callback_data="edit_pseudo")],
-            [InlineKeyboardButton(text="🙂 Эмодзи",         callback_data="edit_emoji")],
-            [InlineKeyboardButton(text="📅 Дата отказа",    callback_data="edit_quit_date")],
-            [InlineKeyboardButton(text="🔔 Вкл / Выкл",     callback_data="toggle_notifs")],
-        ]
-    )
+    # abonnement
+    now = datetime.utcnow().replace(tzinfo=timezone.utc)
+    show_extend_btn = False
+    if getattr(user, "paid_until", None):
+        lines.append(f"• 💳 Абонемент активен до: <b>{_fmt_date(user.paid_until)}</b>")
+        days_left = (user.paid_until - now).days
+        # bouton si expiré ou <= 3 jours
+        if user.paid_until <= now or days_left <= 3:
+            show_extend_btn = True
+    else:
+        lines.append("• 💳 Абонемент: <b>не активен</b>")
+        show_extend_btn = True
+
+    text = "\n".join(lines)
+
+    # clavier
+    rows = [
+        [InlineKeyboardButton(text="✏️ Псевдоним",   callback_data="edit_pseudo")],
+        [InlineKeyboardButton(text="🙂 Эмодзи",      callback_data="edit_emoji")],
+        [InlineKeyboardButton(text="📅 Дата отказа", callback_data="edit_quit_date")],
+        [InlineKeyboardButton(text="🔔 Вкл / Выкл",  callback_data="toggle_notifs")],
+    ]
+    if show_extend_btn:
+        rows.append([InlineKeyboardButton(text="🔁 Продлить подписку", url=TRIBUTE_URL_TEMPLATE)])
+
+    kb = InlineKeyboardMarkup(inline_keyboard=rows)
     await message.answer(text, reply_markup=kb, parse_mode="HTML")
-
+    
 # ──────────────────────── Псевдоним ────────────────────────
 @settings_router.callback_query(F.data == "edit_pseudo")
 async def ask_pseudo(cb: CallbackQuery, state: FSMContext):
-    await cb.message.answer("✏️ Введите новый псевдоним (1-30 символов):")
+    await cb.message.answer("✏️ Введите новый псевдоним (1-10 символов):")
     await state.set_state(SettingsState.pseudo)
     await cb.answer()
 
@@ -69,7 +95,7 @@ async def ask_pseudo(cb: CallbackQuery, state: FSMContext):
 async def save_pseudo(msg: Message, state: FSMContext):
     pseudo = msg.text.strip()
     if not PSEUDO_RE.match(pseudo):
-        return await msg.answer("❌ Неверно. 1-30 символов, без пробелов.")
+        return await msg.answer("❌ Неверно. 1-10 символов, без пробелов.")
     await update_user(msg.from_user.id, pseudo=pseudo)
     await msg.answer("✅ Псевдоним обновлён!")
     await state.clear()
@@ -92,7 +118,7 @@ async def save_emoji(cb: CallbackQuery, state: FSMContext):
 # ──────────────────────── Дата отказа ────────────────────────
 @settings_router.callback_query(F.data == "edit_quit_date")
 async def ask_date(cb: CallbackQuery, state: FSMContext):
-    await cb.message.answer("📅 Новая дата отказа (ГГГГ-ММ-ДД) или 0 — чтобы очистить:")
+    await cb.message.answer("📅 Новая дата отказа (ДД.ММ.ГГГГ) или 0 — чтобы очистить:")
     await state.set_state(SettingsState.quit_date)
     await cb.answer()
 
@@ -106,7 +132,7 @@ async def save_date(msg: Message, state: FSMContext):
         try:
             qd = date.fromisoformat(raw)
         except ValueError:
-            return await msg.answer("❌ Формат: ГГГГ-ММ-ДД. Попробуйте ещё.")
+            return await msg.answer("❌ Формат: ДД.ММ.ГГГГ. Попробуй ещё.")
         await update_user(msg.from_user.id, quit_date=qd)
         await msg.answer("✅ Дата обновлена.")
     await state.clear()

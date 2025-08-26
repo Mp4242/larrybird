@@ -1,3 +1,4 @@
+# handlers/onboarding.py
 from __future__ import annotations
 
 from aiogram import Router, F
@@ -11,7 +12,8 @@ import re
 
 from database.database import async_session
 from database.user import User
-from database.utils import get_user, free90_slots_left, claim_free90
+from database.utils import get_user
+from database.utils import free90_slots_left, claim_free90  # si tu utilises l’offre 90j
 
 onboarding_router = Router()
 
@@ -23,74 +25,77 @@ class OnboardingState(StatesGroup):
     typing_date  = State()
 
 # ═════════ UI ═════════
-EMOJI_CHOICES = ["😎", "👤", "🦁", "🐺", "🦅",
-                 "🐯", "🔥", "💪", "🥷", "👽"]
-PSEUDO_RE = re.compile(r"^(?!/)\S{1,30}$", re.UNICODE)
+EMOJI_CHOICES = ["😎", "👤", "🦁", "🐺", "🦅", "🐯", "🔥", "💪", "🥷", "👽"]
+PSEUDO_RE = re.compile(r"^(?!/)\S{1,10}$", re.UNICODE)
 
 DATE_KB = InlineKeyboardMarkup(
     inline_keyboard=[
         [InlineKeyboardButton(text="🗓️ Указать дату", callback_data="set_date")],
-        [InlineKeyboardButton(text="⏭️ Укажу позже",  callback_data="skip_date")]
+        [InlineKeyboardButton(text="⏭️ Укажу позже",  callback_data="skip_date")],
     ]
 )
 
 WELCOME_KB = InlineKeyboardMarkup(
     inline_keyboard=[
         [InlineKeyboardButton(text="💳 Вступить за 100 ₽", callback_data="pay")],
-        [InlineKeyboardButton(text="👀 Посмотреть демо",    callback_data="demo")]
+        [InlineKeyboardButton(text="👀 Посмотреть демо",    callback_data="demo")],
     ]
 )
 
-def free90_kb(slots: int) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(
-                text=f"🎁 90 дней бесплатно · осталось {slots}",
-                callback_data="join_free90")],
-            [InlineKeyboardButton(text="👀 Посмотреть демо", callback_data="demo")]
-        ]
-    )
+def is_active_member(u: User | None) -> bool:
+    """Tolérant: utilise paid_until s’il existe, sinon False."""
+    if not u:
+        return False
+    paid_until = getattr(u, "paid_until", None)
+    return bool(paid_until and paid_until >= datetime.utcnow())
 
-# ═════════════════════ /start
+def profile_incomplete(u: User | None) -> bool:
+    return (not u) or (not u.pseudo) or u.pseudo.startswith("_anon") or (not u.avatar_emoji)
+
+# ═════════ /start ═════════
 @onboarding_router.message(F.text == "/start")
 async def cmd_start(msg: Message, state: FSMContext):
     user = await get_user(msg.from_user.id)
 
-    # ① Pas en DB → proposer free90 si dispo sinon pay
+    # Nouveau (pas encore en DB) → éventuelle offre 90j
     if not user:
-        slots = await free90_slots_left()
+        try:
+            slots = await free90_slots_left()  # si tu n’utilises pas l’offre, retire ce bloc
+        except Exception:
+            slots = 0
         if slots:
+            kb = InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [InlineKeyboardButton(
+                        text=f"🎁 90 дней бесплатно · осталось {slots}",
+                        callback_data="join_free90"
+                    )],
+                    [InlineKeyboardButton(text="👀 Посмотреть демо", callback_data="demo")],
+                ]
+            )
             return await msg.answer(
                 "🔥 Приватный клуб TREZV\n"
                 "Первые 100 получают доступ на 90 дней бесплатно.\n"
                 f"Осталось <b>{slots}</b> мест 👇",
-                reply_markup=free90_kb(slots), parse_mode="HTML"
+                reply_markup=kb, parse_mode="HTML",
             )
         return await msg.answer(
             "🔥 Приватный клуб TREZV.\nСмотри демо или вступай 👇",
-            reply_markup=WELCOME_KB
+            reply_markup=WELCOME_KB,
         )
 
-    # ② Profil incomplet → pseudo/emoji/date
-    if (not user.pseudo) or user.pseudo.startswith("_anon") or (not user.avatar_emoji):
-        await msg.answer("✏️ Введи псевдоним (1–30 символов):")
+    # Profil à compléter ?
+    if profile_incomplete(user):
+        await msg.answer("✏️ Введи псевдоним (1–10 символов):")
         return await state.set_state(OnboardingState.pseudo)
 
-    # ③ Profil OK mais pas membre actif → proposer free90 (si pas encore pris) ou pay
-    if not user.is_active_member():
-        if not user.free90_claimed:
-            slots = await free90_slots_left()
-            if slots:
-                return await msg.answer(
-                    "🔥 Возьми 90 дней бесплатно, пока есть места:",
-                    reply_markup=free90_kb(slots)
-                )
-        return await msg.answer("🚀 Готов вступить в закрытый клуб?", reply_markup=WELCOME_KB)
+    # Profil OK → selon l’abonnement
+    if is_active_member(user):
+        return await msg.answer("👋 Ты уже в клубе. /help — список команд.")
+    else:
+        return await msg.answer("🔒 Подписка не активна. Вступай 👇", reply_markup=WELCOME_KB)
 
-    # ④ Déjà membre actif
-    await msg.answer("👋 Ты уже в клубе. /help — список команд.")
-
-# ═════════ 90 jours gratuits ═════════
+# ═════════ 90 дней бесплатно ═════════
 @onboarding_router.callback_query(F.data == "join_free90")
 async def join_free90(cb: CallbackQuery):
     ok = await claim_free90(cb.from_user.id)
@@ -98,7 +103,6 @@ async def join_free90(cb: CallbackQuery):
         await cb.answer("Увы, бесплатные места закончились.", show_alert=True)
         await cb.message.edit_reply_markup(reply_markup=WELCOME_KB)
         return
-
     await cb.message.answer("🎉 Активировано 90 дней бесплатно! Заверши профиль → /start")
     await cb.answer()
 
@@ -112,11 +116,13 @@ async def cancel_pseudo(msg: Message, state: FSMContext):
 async def set_pseudo(message: Message, state: FSMContext):
     raw = (message.text or "").strip()
     if not PSEUDO_RE.match(raw):
-        return await message.answer("❌ 1–30 символов, без пробелов. Попробуй ещё:")
+        return await message.answer("❌ 1–10 символов, без пробелов. Попробуй ещё:")
     await state.update_data(pseudo=raw)
 
-    rows = [[InlineKeyboardButton(text=e, callback_data=f"avatar:{e}") for e in EMOJI_CHOICES[i:i+5]]
-            for i in range(0, len(EMOJI_CHOICES), 5)]
+    rows = [
+        [InlineKeyboardButton(text=e, callback_data=f"avatar:{e}") for e in EMOJI_CHOICES[i:i+5]]
+        for i in range(0, len(EMOJI_CHOICES), 5)
+    ]
     kb = InlineKeyboardMarkup(inline_keyboard=rows)
 
     await message.answer("🙂 Выбери эмодзи-аватар:", reply_markup=kb)
@@ -126,7 +132,7 @@ async def set_pseudo(message: Message, state: FSMContext):
 @onboarding_router.callback_query(StateFilter(OnboardingState.emoji), F.data.startswith("avatar:"))
 async def choose_avatar(cb: CallbackQuery, state: FSMContext):
     await state.update_data(avatar_emoji=cb.data.split(":", 1)[1])
-    await cb.message.answer("📅 Когда ты бросил траву?", reply_markup=DATE_KB)
+    await cb.message.answer("📅 Когда ты бросил курить?", reply_markup=DATE_KB)
     await state.set_state(OnboardingState.choose_date)
 
 # ═════════ DATE ═════════
@@ -170,8 +176,11 @@ async def complete_registration(telegram_id: int, state: FSMContext, reply_fn):
 
     await reply_fn("✅ Профиль создан!")
 
+    # Après profil: montrer l’état d’abonnement correct
     u = await get_user(telegram_id)
-    if not (u and u.is_active_member()):
+    if is_active_member(u):
+        await reply_fn("🚀 Добро пожаловать в закрытый клуб!")
+    else:
         await reply_fn("🚀 Готов вступить в закрытый клуб?", reply_markup=WELCOME_KB)
 
     await state.clear()
@@ -181,9 +190,9 @@ async def complete_registration(telegram_id: int, state: FSMContext, reply_fn):
 async def show_demo(cb: CallbackQuery):
     demo = (
         "🆘 Пример /sos:\n"
-        "«Ребята, жёстко тянет, помогите словами…»\n\n"
+        "«Ребята жёстко тянет, помогите…»\n\n"
         "🏆 Пример /win:\n"
-        "«30 дней без травы! Ощущаю энергию 💪»\n\n"
+        "«30 дней без курения! Ощущаю энергию 💪»\n\n"
         "📊 /counter показывает личный стаж и статистику.\n"
     )
     await cb.message.answer(demo)

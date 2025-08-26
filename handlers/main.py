@@ -12,7 +12,7 @@ from aiogram.fsm.context import FSMContext
 from sqlalchemy import select, func
 from datetime import date
 
-from config import SUPER_GROUP, TOPICS, MENTORS
+from config import SUPER_GROUP, TOPICS, MENTORS, TRIBUTE_URL_TEMPLATE
 from database.database import async_session
 from database.user import User
 from database.post import Post
@@ -71,6 +71,16 @@ async def ensure_profile_complete(user: User | None, reply_fn) -> bool:
         return False
     return True
 
+async def ensure_member_active(user: User | None, reply_fn) -> bool:
+    if not user or not user.is_active_member():
+        await reply_fn(
+            "⛔ <b>Нет активной подписки.</b>\n"
+            f"Оформи доступ здесь: {TRIBUTE_URL_TEMPLATE}",
+            parse_mode="HTML"
+        )
+        return False
+    return True
+
 # ═════════════  /win et /sos  ═════════════
 @main_router.message(F.text == "/win")
 async def cmd_win(msg: Message, state: FSMContext):
@@ -78,6 +88,8 @@ async def cmd_win(msg: Message, state: FSMContext):
         user = await ses.scalar(select(User)
                                 .where(User.telegram_id == msg.from_user.id))
         if not await ensure_profile_complete(user, msg.answer):
+            return
+        if not await ensure_member_active(user, msg.answer):
             return
     await msg.answer("🎉 Расскажи о своей победе (до 500 символов):")
     await state.set_state(WinState.waiting_for_text)
@@ -88,6 +100,8 @@ async def cmd_sos(msg: Message, state: FSMContext):
         user = await ses.scalar(select(User)
                                 .where(User.telegram_id == msg.from_user.id))
         if not await ensure_profile_complete(user, msg.answer):
+            return
+        if not await ensure_member_active(user, msg.answer):
             return
     await msg.answer("🆘 Что случилось? Опиши ситуацию (до 500 символов):")
     await state.set_state(SosState.waiting_for_text)
@@ -113,6 +127,8 @@ async def handle_sos(msg: Message, state: FSMContext):
                                       .where(User.telegram_id == msg.from_user.id))
         if not await ensure_profile_complete(user, msg.answer):
             return
+        if not await ensure_member_active(user, msg.answer):
+            return
 
         sobriety = format_sobriety_duration(user.quit_date)
         body = (
@@ -120,13 +136,11 @@ async def handle_sos(msg: Message, state: FSMContext):
             f"—\n{user.avatar_emoji} {user.pseudo} | {sobriety} | 0 ответов"
         )
 
-        # on envoie sans clavier puis on le rajoute
-        # ───── SOS ─────────────────────────────────────────
         sent = await msg.bot.send_message(
             SUPER_GROUP, message_thread_id=TOPICS["sos"], text=body
         )
-        await sent.edit_reply_markup(                # ⬅️ AVANT
-            reply_markup=post_inline_keyboard(       # ⬅️ APRÈS — on nomme l’arg
+        await sent.edit_reply_markup(
+            reply_markup=post_inline_keyboard(
                 message_id=sent.message_id,
                 with_reply=True, with_like=True, with_support=True, likes=0
             )
@@ -150,6 +164,8 @@ async def handle_win(msg: Message, state: FSMContext):
                                       .where(User.telegram_id == msg.from_user.id))
         if not await ensure_profile_complete(user, msg.answer):
             return
+        if not await ensure_member_active(user, msg.answer):
+            return
 
         sobriety = format_sobriety_duration(user.quit_date)
         body = (
@@ -157,11 +173,10 @@ async def handle_win(msg: Message, state: FSMContext):
             f"—\n{user.avatar_emoji} {user.pseudo} | {sobriety} | 0 ответов"
         )
 
-        # ───── WIN ─────────────────────────────────────────
         sent = await msg.bot.send_message(
             SUPER_GROUP, message_thread_id=TOPICS["wins"], text=body
         )
-        await sent.edit_reply_markup(                # ⬅️ même correction
+        await sent.edit_reply_markup(
             reply_markup=post_inline_keyboard(
                 message_id=sent.message_id,
                 with_reply=True, with_like=True, with_support=False, likes=0
@@ -211,7 +226,7 @@ async def like_post(cb: CallbackQuery):
                 likes=likes
             )
         )
-    except Exception:                # BadRequest : « message is not modified »
+    except Exception:
         pass
     await cb.answer("❤️")
 
